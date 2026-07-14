@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#14271f">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Fungi AI">
+  <meta name="description" content="Mappe porcini, meteo, profili e fungaie salvate localmente sul telefono.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Fungi AI – Mappe Porcini">
+  <meta property="og:description" content="Mappe porcini, meteo, profili e fungaie salvate localmente sul telefono.">
+  <meta property="og:url" content="https://villagiacomo.github.io/fungi/">
+  <meta property="og:image" content="https://villagiacomo.github.io/fungi/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://villagiacomo.github.io/fungi/">
+  <title>Fungi AI Offline</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="access-locked">
+  <section id="accessGate" class="access-gate" aria-labelledby="accessTitle">
+    <form id="accessForm" class="access-card">
+      <div class="access-mark" aria-hidden="true">♠</div>
+      <span class="eyebrow">Accesso riservato</span>
+      <h1 id="accessTitle">Fungi AI</h1>
+      <p>Inserisci il codice condiviso dal proprietario per aprire le mappe porcini.</p>
+      <label for="accessCode"><span>Codice d’ingresso</span>
+        <input id="accessCode" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label class="remember-access"><input id="rememberAccess" type="checkbox" checked> Ricorda questo telefono</label>
+      <button id="accessSubmit" type="submit" class="primary full">Entra</button>
+      <small id="accessError" class="access-error" role="alert"></small>
+    </form>
+  </section>
+  <header class="app-header">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 48 48"><path d="M9 24c2-10 8-15 15-15s13 5 15 15c-8 3-22 3-30 0Z"/><path d="M19 25h10l3 14H16l3-14Z"/></svg>
+    </div>
+    <div>
+      <h1>Fungi AI</h1>
+      <p>Porcini · locale sul telefono</p>
+    </div>
+    <span id="offlineBadge" class="badge">offline pronto</span>
+  </header>
+
+  <aside id="installBanner" class="install-banner hidden" aria-label="Installa Fungi AI">
+    <div>
+      <strong>Portala sulla schermata Home</strong>
+      <span>Si apre come un’app e conserva profili, mappe e fungaie sul telefono.</span>
+    </div>
+    <button id="installAppButton" type="button" class="primary compact">Installa</button>
+    <button id="dismissInstall" type="button" class="install-dismiss" aria-label="Nascondi">×</button>
+  </aside>
+
+  <main>
+    <section id="pageMap" class="page active" data-page="map">
+      <div class="status-card">
+        <div>
+          <span id="activeProfileEyebrow" class="eyebrow">AI-mode locale</span>
+          <strong id="modelStatus">Mappe incluse nell’app</strong>
+          <small id="modelUpdated">Nessun download necessario per consultarle</small>
+        </div>
+        <button id="updateWeather" class="primary compact">
+          <span class="button-icon">↻</span> Aggiorna dati
+        </button>
+      </div>
+
+      <div class="map-controls map-controls-main">
+        <label>
+          <span>Sfondo</span>
+          <select id="basemapSelect">
+            <option value="osm">Politica / strade</option>
+            <option value="satellite">Satellite Sentinel-2</option>
+            <option value="offline">Quota offline</option>
+          </select>
+        </label>
+        <label>
+          <span>Layer sovrapposto</span>
+          <select id="layerSelect">
+            <option value="probability">Probabilità porcini</option>
+          </select>
+        </label>
+      </div>
+      <div class="map-controls map-controls-secondary">
+        <label id="dayControl">
+          <span>Giorno</span>
+          <select id="daySelect">
+            <option value="today">Oggi</option>
+            <option value="tomorrow">Domani</option>
+            <option value="day_after_tomorrow">Dopodomani</option>
+          </select>
+        </label>
+        <label>
+          <span>Trasparenza layer</span>
+          <input id="overlayOpacity" type="range" min="15" max="100" step="5" value="72">
+        </label>
+      </div>
+
+      <div id="mapViewport" class="map-viewport" aria-label="Mappa offline">
+        <div id="leafletMap"></div>
+        <div class="map-hint">Sfondo online · layer locali sovrapposti</div>
+        <button id="resetMap" class="map-tool reset" aria-label="Inquadra area porcini">⌂</button>
+        <button id="gpsButton" class="map-tool gps" aria-label="Vai alla mia posizione">◎</button>
+      </div>
+
+      <div class="map-readout">
+        <div><span>Posizione</span><strong id="coordReadout">Tocca la mappa</strong></div>
+        <div><span>Indice</span><strong id="scoreReadout">—</strong></div>
+        <button id="addAtMap" class="secondary compact">＋ Fungaia qui</button>
+      </div>
+
+      <div id="probabilityLegend" class="legend" aria-label="Legenda probabilita">
+        <span><i style="--color:#fff176"></i>bassa</span>
+        <span><i style="--color:#ffb74d"></i>media</span>
+        <span><i style="--color:#f4511e"></i>alta</span>
+        <span><i style="--color:#b71c1c"></i>molto alta</span>
+      </div>
+      <p class="disclaimer">Indice relativo sperimentale, non garanzia di ritrovamento. Verifica sempre accessi, divieti e sicurezza sul posto.</p>
+    </section>
+
+    <section id="pagePoints" class="page" data-page="points">
+      <div class="section-heading">
+        <div><span class="eyebrow">Archivio locale</span><h2>Le mie fungaie</h2></div>
+        <button id="newPoint" class="primary compact">＋ Nuova</button>
+      </div>
+      <div class="summary-grid">
+        <div class="summary-tile"><span>Punti salvati</span><strong id="pointCount">0</strong></div>
+        <div class="summary-tile"><span>Ultimo</span><strong id="lastPointDate">—</strong></div>
+      </div>
+      <div id="pointsEmpty" class="empty-state">
+        <div class="empty-icon">⌖</div>
+        <h3>Nessun punto salvato</h3>
+        <p>Usa il GPS oppure tocca la mappa. I dati rimangono sul telefono.</p>
+      </div>
+      <div id="pointsList" class="points-list"></div>
+      <button id="exportPoints" class="secondary full">Esporta e condividi GeoJSON</button>
+      <p class="helper">Il file è compatibile con QGIS e con la dashboard desktop. Su iPhone e Android si apre il menu di condivisione del telefono.</p>
+    </section>
+
+    <section id="pageAi" class="page" data-page="ai">
+      <div class="section-heading">
+        <div><span class="eyebrow">Calcolo probabilità</span><h2>Profili porcini</h2></div>
+        <span id="activeProfileBadge" class="badge accent">AI-mode</span>
+      </div>
+      <p class="lead">Scegli prima il profilo con cui calcolare le probabilità. Il meteo già scaricato viene ricalcolato sul telefono quando cambi profilo.</p>
+      <div class="profile-picker-card">
+        <label><span>Profilo da usare</span><select id="profileSelect"></select></label>
+        <button id="activateProfile" class="primary full">Attiva questo profilo</button>
+        <small id="profileStatus">Profilo attivo sul telefono: AI-mode</small>
+      </div>
+      <div id="profilePresetCards" class="profile-preset-list"></div>
+      <details id="customEditor" class="model-note custom-editor">
+        <summary>Modifica “Mio profilo”</summary>
+        <p>Puoi partire dal profilo selezionato, cambiare i valori e salvarli soltanto sul telefono.</p>
+        <button id="copyToCustom" type="button" class="secondary full">Copia il profilo selezionato nel personale</button>
+        <form id="customProfileForm">
+          <div id="profileEditorFields" class="profile-editor-fields"></div>
+          <button type="submit" class="primary full">Salva e attiva Mio profilo</button>
+        </form>
+      </details>
+      <div class="section-heading compact-heading"><div><span class="eyebrow">Regole del profilo</span><h2 id="profileRulesTitle">AI-mode</h2></div></div>
+      <div id="aiRules" class="rules-list"></div>
+      <details class="model-note">
+        <summary>Come viene calcolato sul telefono</summary>
+        <p>Il telefono scarica solo serie meteo numeriche da Open-Meteo. Pioggia, temperatura, umidità e vento vengono trasformati in indici 0–1 e interpolati sulla griglia locale. Il risultato viene moltiplicato per habitat forestale, proxy del suolo e quota dinamica; le fungaie personali aggiungono un bonus locale limitato.</p>
+      </details>
+      <details class="model-note">
+        <summary>Cosa funziona senza rete</summary>
+        <p>App, mappe incluse, AI-mode, GPS, archivio delle fungaie, lettura dei layer ed esportazione GeoJSON. La rete serve soltanto per ottenere un nuovo pacchetto meteo; l’ultimo calcolo resta memorizzato.</p>
+      </details>
+      <p class="source-note">Meteo: Open-Meteo. Cartografia politica: OpenStreetMap. Satellite: EOxCloudless / Copernicus Sentinel-2. Layer fungini: dati locali del progetto.</p>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Navigazione principale">
+    <button class="active" data-target="map"><span>⌁</span>Mappa</button>
+    <button data-target="points"><span>⌖</span>Fungaie</button>
+    <button data-target="ai"><span>✦</span>Profili</button>
+  </nav>
+
+  <div id="pointModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pointModalTitle">
+    <div class="modal-backdrop" data-close-modal></div>
+    <form id="pointForm" class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-title"><h2 id="pointModalTitle">Salva fungaia</h2><button type="button" class="icon-button" data-close-modal>×</button></div>
+      <div class="coordinate-chip" id="formCoordinates">Coordinate non impostate</div>
+      <div class="form-row two">
+        <label><span>Data</span><input id="pointDate" type="date" required></label>
+        <label><span>Tipo</span><select id="pointType"><option value="both">Fungaia + ritrovamento</option><option value="known_spot">Fungaia nota</option><option value="finding">Ritrovamento</option></select></label>
+      </div>
+      <label><span>Quantità</span><input id="pointQuantity" type="text" placeholder="es. 4 porcini, 650 g"></label>
+      <label><span>Nota</span><textarea id="pointNote" rows="3" placeholder="Bosco, esposizione, condizioni..."></textarea></label>
+      <button type="submit" class="primary full">Salva sul telefono</button>
+    </form>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="data/manifest.js"></script>
+  <script src="model.js"></script>
+  <script src="gate.js"></script>
+</body>
+</html>

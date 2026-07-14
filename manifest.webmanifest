@@ -1,0 +1,20 @@
+{
+  "name": "Fungi AI – Mappe Porcini",
+  "short_name": "Fungi AI",
+  "description": "Mappe porcini, meteo, profili e fungaie personali salvate sul telefono.",
+  "lang": "it",
+  "id": "/fungi/",
+  "start_url": "/fungi/",
+  "scope": "/fungi/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#f5f0e6",
+  "theme_color": "#14271f",
+  "categories": ["navigation", "utilities", "weather"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
