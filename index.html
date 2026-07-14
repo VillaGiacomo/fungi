@@ -115,12 +115,33 @@
         <button id="addAtMap" class="secondary compact">＋ Fungaia qui</button>
       </div>
 
-      <div id="probabilityLegend" class="legend" aria-label="Legenda probabilita">
-        <span><i style="--color:#fff176"></i>bassa</span>
-        <span><i style="--color:#ffb74d"></i>media</span>
-        <span><i style="--color:#f4511e"></i>alta</span>
-        <span><i style="--color:#b71c1c"></i>molto alta</span>
-      </div>
+      <div id="layerLegend" class="layer-legend" aria-label="Legenda del layer"></div>
+
+      <section id="pointAnalysis" class="point-analysis hidden" aria-live="polite">
+        <div class="analysis-heading">
+          <div><span class="eyebrow">Dettaglio cella</span><h2>Punto selezionato</h2></div>
+          <span id="analysisCoordinates" class="coordinate-chip">—</span>
+        </div>
+        <div id="analysisMetrics" class="analysis-metrics"></div>
+        <div id="analysisWeatherNotice" class="analysis-notice hidden"></div>
+        <article class="chart-card">
+          <div class="chart-title"><div><strong>Probabilità porcini</strong><small>Oggi, domani e dopodomani</small></div><span id="analysisProfileLabel"></span></div>
+          <div id="probabilityChart" class="chart-host"></div>
+        </article>
+        <article class="chart-card">
+          <div class="chart-title"><div><strong>Pioggia giornaliera</strong><small>Ultimi 20 giorni disponibili</small></div><span id="rainChartTotal"></span></div>
+          <div id="rainChart" class="chart-host"></div>
+        </article>
+        <article class="chart-card">
+          <div class="chart-title"><div><strong>Temperature</strong><small>Minima e massima · ultimi 14 giorni</small></div><span class="chart-key"><i class="min-temp"></i>min <i class="max-temp"></i>max</span></div>
+          <div id="temperatureChart" class="chart-host"></div>
+        </article>
+        <article class="chart-card compact-chart">
+          <div class="chart-title"><div><strong>Umidità media</strong><small>Ultimi 14 giorni</small></div><span id="humidityLatest"></span></div>
+          <div id="humidityChart" class="chart-host"></div>
+        </article>
+        <p class="helper">Meteo interpolato dal punto Open-Meteo più vicino della griglia locale. Come sul PC, l’indice è sperimentale e relativo.</p>
+      </section>
       <p class="disclaimer">Indice relativo sperimentale, non garanzia di ritrovamento. Verifica sempre accessi, divieti e sicurezza sul posto.</p>
     </section>
 

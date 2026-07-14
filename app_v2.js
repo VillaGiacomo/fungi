@@ -90,6 +90,34 @@
     habitat_power: "Selettività habitat"
   };
 
+  const DAY_LABELS = { today: "Oggi", tomorrow: "Domani", day_after_tomorrow: "Dopodomani" };
+  const FOREST_LEGEND = [
+    ["#bdbdbd", "Sconosciuto"], ["#9e9e9e", "Bosco non classificato"],
+    ["#6d8f32", "Querceto / querco-carpineto"], ["#2e7d32", "Faggeta"],
+    ["#795548", "Castagneto"], ["#00695c", "Pecceta"], ["#00897b", "Abieteto"],
+    ["#43a047", "Pineta"], ["#cddc39", "Lariceto"], ["#8bc34a", "Cembreta"],
+    ["#c0ca33", "Lariceto / cembreta"], ["#7cb342", "Mugheta"],
+    ["#00796b", "Conifere"], ["#66bb6a", "Latifoglie"], ["#558b2f", "Bosco misto"],
+    ["#1b5e20", "Misto latifoglie-conifere"], ["#26a69a", "Ripariale / umido"],
+    ["#424242", "Robinieto"], ["#ffb74d", "Acereto"], ["#90a4ae", "Frassineto"],
+    ["#bcaaa4", "Aceri-frassineto"]
+  ];
+  const LAND_COVER_LEGEND = [
+    ["#bdbdbd", "Sconosciuto"], ["#2e7d32", "Bosco"], ["#8bc34a", "Cespuglieto"],
+    ["#fbc02d", "Agricolo"], ["#9e9e9e", "Urbanizzato"], ["#795548", "Industriale / cava"],
+    ["#1e88e5", "Acqua"], ["#eeeeee", "Roccia / detrito"], ["#80deea", "Ghiacciaio"],
+    ["#f5f5f5", "Neve permanente"], ["#d7ccc8", "Vegetazione assente/rada"]
+  ];
+  const FOREST_PROFILE_LABELS = {
+    forest_beech_score: "Faggio", forest_chestnut_score: "Castagno", forest_spruce_score: "Abete rosso",
+    forest_fir_score: "Abete bianco", forest_oak_score: "Quercia", forest_pine_score: "Pino",
+    forest_mixed_broadleaf_conifer_score: "Misto latifoglie/conifere", forest_broadleaf_score: "Latifoglie",
+    forest_conifer_score: "Conifere", forest_mixed_score: "Bosco misto", forest_unclassified_score: "Non classificato",
+    forest_larch_score: "Larice", forest_cembra_score: "Cembro", forest_larch_cembran_score: "Larice-cembro",
+    forest_mugo_score: "Mugo", forest_riparian_score: "Ripariale", forest_black_locust_score: "Robinia",
+    forest_maple_score: "Acero", forest_ash_score: "Frassino", forest_maple_ash_score: "Acero-frassino"
+  };
+
   const state = {
     manifest: null,
     profiles: {},
@@ -116,19 +144,6 @@
     pointsLayer: null,
     projectBounds: null
   };
-
-  let deferredInstallPrompt = null;
-  window.addEventListener("beforeinstallprompt", event => {
-    event.preventDefault();
-    deferredInstallPrompt = event;
-    const banner = document.querySelector("#installBanner");
-    if (banner) banner.classList.remove("hidden");
-  });
-  window.addEventListener("appinstalled", () => {
-    deferredInstallPrompt = null;
-    const banner = document.querySelector("#installBanner");
-    if (banner) banner.classList.add("hidden");
-  });
 
   const $ = selector => document.querySelector(selector);
   const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -187,7 +202,6 @@
       state.raster = await loadModelRasters(state.manifest);
       bindNavigation();
       bindControls();
-      bindInstallExperience();
       populateControls();
       initializeMap();
       renderProfileUi();
@@ -249,33 +263,6 @@
     $("#activateProfile").addEventListener("click", activateSelectedProfile);
     $("#copyToCustom").addEventListener("click", copySelectedToCustom);
     $("#customProfileForm").addEventListener("submit", saveCustomProfile);
-  }
-
-  function bindInstallExperience() {
-    const banner = $("#installBanner");
-    const standalone = window.matchMedia("(display-mode: standalone)").matches
-      || window.navigator.standalone === true;
-    if (!standalone && localStorage.getItem("fungi.mobile.install-dismissed") !== "1") {
-      banner.classList.remove("hidden");
-    }
-    $("#installAppButton").addEventListener("click", async () => {
-      if (deferredInstallPrompt) {
-        deferredInstallPrompt.prompt();
-        await deferredInstallPrompt.userChoice;
-        deferredInstallPrompt = null;
-        banner.classList.add("hidden");
-        return;
-      }
-      const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent)
-        || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-      showToast(isApple
-        ? "In Safari: tocca Condividi ↑ e poi “Aggiungi alla schermata Home”"
-        : "Apri il menu del browser e scegli “Installa app” o “Aggiungi a schermata Home”");
-    });
-    $("#dismissInstall").addEventListener("click", () => {
-      localStorage.setItem("fungi.mobile.install-dismissed", "1");
-      banner.classList.add("hidden");
-    });
   }
 
   function populateControls() {
@@ -351,7 +338,6 @@
     localStorage.setItem(STORAGE.overlay, state.activeOverlay);
     $("#layerSelect").value = state.activeOverlay;
     $("#dayControl").classList.toggle("hidden", state.activeOverlay !== "probability");
-    $("#probabilityLegend").classList.toggle("hidden", state.activeOverlay !== "probability");
     if (state.overlayLayer) {
       state.map.removeLayer(state.overlayLayer);
       state.overlayLayer = null;
@@ -369,7 +355,9 @@
         opacity: state.overlayOpacity, pane: "fungiOverlay", alt: "Layer " + state.activeOverlay
       }).addTo(state.map);
     }
+    renderLayerLegend();
     readSelectedScore();
+    renderPointAnalysis();
   }
 
   function bundledProbabilityPath(day) {
@@ -708,6 +696,8 @@
         fillColor: "#a65a34", fillOpacity: 1 }).addTo(state.map);
     }
     readSelectedScore();
+    renderPointAnalysis();
+    if (showMarker) setTimeout(() => $("#pointAnalysis").scrollIntoView({ behavior: "smooth", block: "start" }), 120);
   }
 
   function readSelectedScore() {
@@ -727,6 +717,180 @@
       $("#scoreReadout").textContent = "aggiorna";
     } else $("#scoreReadout").textContent = scores[y * state.manifest.model.width + x] + " / 100";
   }
+
+  function renderLayerLegend() {
+    const container = $("#layerLegend");
+    if (!container || !state.manifest) return;
+    const layer = state.manifest.layers.find(item => item.key === state.activeOverlay);
+    const title = state.activeOverlay === "probability" ? "Probabilità porcini" : (layer ? layer.label : "Indice");
+    if (state.activeOverlay === "forest") return renderCategoryLegend(container, title, FOREST_LEGEND);
+    if (state.activeOverlay === "land_cover") return renderCategoryLegend(container, title, LAND_COVER_LEGEND);
+    const settings = {
+      probability: ["linear-gradient(90deg,#fff,#fff176,#ffb74d,#f4511e,#b71c1c)", ["0", "25", "50", "75", "100"]],
+      elevation: ["linear-gradient(90deg,#2c7bb6,#abd9e9,#ffffbf,#fdae61,#8c510a)", ["bassa", "medio-bassa", "media", "alta", "molto alta"]],
+      slope: ["linear-gradient(90deg,#f7fcf5,#c7e9c0,#74c476,#238b45,#00441b)", ["piana", "dolce", "media", "forte", "ripida"]]
+    }[state.activeOverlay] || ["linear-gradient(90deg,#fff,#fff176,#ffb74d,#f4511e,#b71c1c)", ["0", "25", "50", "75", "100"]];
+    container.innerHTML = `<strong class="legend-title">${escapeHtml(title)}</strong><div class="legend-gradient" style="background:${settings[0]}"></div><div class="legend-scale">${settings[1].map(label => `<span>${escapeHtml(label)}</span>`).join("")}</div>`;
+  }
+
+  function renderCategoryLegend(container, title, entries) {
+    container.innerHTML = `<strong class="legend-title">${escapeHtml(title)}</strong><div class="legend-categories">${entries.map(([color, label]) =>
+      `<span class="legend-item"><i style="background:${color}"></i>${escapeHtml(label)}</span>`).join("")}</div>`;
+  }
+
+  function cellForLocation(location) {
+    if (!location || !state.manifest) return null;
+    const bbox = state.manifest.area.bbox;
+    const width = state.manifest.model.width;
+    const height = state.manifest.model.height;
+    const x = Math.round((location.lon - bbox.min_lon) / (bbox.max_lon - bbox.min_lon) * (width - 1));
+    const y = Math.round((bbox.max_lat - location.lat) / (bbox.max_lat - bbox.min_lat) * (height - 1));
+    return x < 0 || x >= width || y < 0 || y >= height ? null : { x, y, index: y * width + x };
+  }
+
+  function scoreAtLocation(day, location) {
+    const cell = cellForLocation(location);
+    const scores = (state.scores[state.activeProfile] || {})[day];
+    return cell && scores ? Number(scores[cell.index]) : null;
+  }
+
+  function renderPointAnalysis() {
+    const panel = $("#pointAnalysis");
+    if (!panel) return;
+    panel.classList.toggle("hidden", !state.selected);
+    if (!state.selected) return;
+    $("#analysisCoordinates").textContent = `${state.selected.lat.toFixed(5)}, ${state.selected.lon.toFixed(5)}`;
+    $("#analysisProfileLabel").textContent = activeProfileEntry().label;
+    const cell = cellForLocation(state.selected);
+    const probability = window.FungiModel.DAY_KEYS.map(day => ({ label: DAY_LABELS[day], value: scoreAtLocation(day, state.selected) }));
+    renderBarChart($("#probabilityChart"), probability, { maximum: 100, color: "#b44f28", showValues: true, suffix: "%" });
+    if (!cell) {
+      $("#analysisMetrics").innerHTML = metricHtml("Posizione", "Fuori area modello");
+      $("#analysisWeatherNotice").textContent = "Il punto è fuori dall’area coperta dai layer porcini.";
+      clearWeatherCharts("Fuori area meteo");
+      return;
+    }
+    const habitat = habitatForActiveProfile();
+    const selectedScore = scoreAtLocation(state.activeDay, state.selected);
+    const baseMetrics = [
+      ["Indice " + (DAY_LABELS[state.activeDay] || ""), selectedScore == null ? "Aggiorna dati" : selectedScore + " / 100"],
+      ["Quota", state.raster.elevation[cell.index] >= 0 ? state.raster.elevation[cell.index] + " m" : "—"],
+      ["Habitat", Math.round(habitat[cell.index] / 255 * 100) + " / 100"],
+      ["Bosco", forestLabelForId(state.raster.forest[cell.index])],
+      ["Suolo", soilLabel(state.raster.soil[cell.index])]
+    ];
+    const daily = nearestWeatherDaily(state.selected);
+    if (!daily) {
+      $("#analysisMetrics").innerHTML = baseMetrics.map(item => metricHtml(...item)).join("");
+      $("#analysisWeatherNotice").textContent = "Premi Aggiorna dati per scaricare meteo e riempire i grafici locali.";
+      clearWeatherCharts("Meteo non ancora scaricato");
+      return;
+    }
+    const targetDate = addIsoDays(window.FungiModel.localTodayIso(), { today: 0, tomorrow: 1, day_after_tomorrow: 2 }[state.activeDay] || 0);
+    const rows20 = weatherRows(daily, targetDate, 20);
+    const rows14 = rows20.slice(-14);
+    const rows7 = rows20.slice(-7);
+    const rain7 = total(rows7, "rain");
+    const rain20 = total(rows20, "rain");
+    const temp7 = average(rows7, "mean");
+    const humidity7 = average(rows7, "humidity");
+    const gust2 = maximum(rows20.slice(-2), "gust");
+    const metrics = baseMetrics.concat([
+      ["Pioggia 7 / 20 gg", `${formatNumber(rain7, 1)} / ${formatNumber(rain20, 1)} mm`],
+      ["Temperatura media 7 gg", temp7 == null ? "—" : formatNumber(temp7, 1) + " °C"],
+      ["Umidità media 7 gg", humidity7 == null ? "—" : formatNumber(humidity7, 0) + "%"],
+      ["Raffica max 2 gg", gust2 == null ? "—" : formatNumber(gust2, 0) + " km/h"]
+    ]);
+    $("#analysisMetrics").innerHTML = metrics.map(item => metricHtml(...item)).join("");
+    $("#analysisWeatherNotice").textContent = "Serie del punto meteo locale più vicino · dati Open-Meteo salvati sul telefono";
+    $("#rainChartTotal").textContent = formatNumber(rain20, 1) + " mm / 20 gg";
+    $("#humidityLatest").textContent = humidity7 == null ? "" : "media 7 gg " + formatNumber(humidity7, 0) + "%";
+    renderBarChart($("#rainChart"), rows20.map(row => ({ label: shortDate(row.date), value: row.rain })),
+      { color: "#287dcc", minimumMaximum: 5, suffix: " mm" });
+    renderLineChart($("#temperatureChart"), rows14, [
+      { key: "min", label: "min", color: "#287dcc" }, { key: "max", label: "max", color: "#d35428" }
+    ], { suffix: "°", dynamicRange: true });
+    renderLineChart($("#humidityChart"), rows14, [{ key: "humidity", label: "umidità", color: "#287a54" }],
+      { suffix: "%", minimum: 0, maximum: 100 });
+  }
+
+  function nearestWeatherDaily(location) {
+    if (!state.weather) return null;
+    const payloads = Array.isArray(state.weather) ? state.weather : [state.weather];
+    const bbox = state.manifest.area.bbox;
+    const axis = Number(state.manifest.model.weather_points_per_axis || 5);
+    const column = clamp(Math.round((location.lon - bbox.min_lon) / (bbox.max_lon - bbox.min_lon) * (axis - 1)), 0, axis - 1);
+    const row = clamp(Math.round((bbox.max_lat - location.lat) / (bbox.max_lat - bbox.min_lat) * (axis - 1)), 0, axis - 1);
+    const payload = payloads[row * axis + column] || payloads[0];
+    return payload && payload.daily && Array.isArray(payload.daily.time) ? payload.daily : null;
+  }
+
+  function weatherRows(daily, targetDate, count) {
+    return daily.time.map((date, index) => ({
+      date, rain: finiteOrNull(daily.precipitation_sum && daily.precipitation_sum[index]),
+      mean: finiteOrNull(daily.temperature_2m_mean && daily.temperature_2m_mean[index]),
+      min: finiteOrNull(daily.temperature_2m_min && daily.temperature_2m_min[index]),
+      max: finiteOrNull(daily.temperature_2m_max && daily.temperature_2m_max[index]),
+      humidity: finiteOrNull(daily.relative_humidity_2m_mean && daily.relative_humidity_2m_mean[index]),
+      gust: finiteOrNull(daily.wind_gusts_10m_max && daily.wind_gusts_10m_max[index])
+    })).filter(row => row.date <= targetDate).slice(-count);
+  }
+
+  function renderBarChart(host, data, options = {}) {
+    const finite = data.map(item => item.value).filter(Number.isFinite);
+    if (!finite.length) return renderEmptyChart(host, "Dati non disponibili");
+    const width = 320, height = 140, left = 28, right = 8, top = 12, bottom = 25;
+    const plotWidth = width - left - right, plotHeight = height - top - bottom;
+    const maxValue = options.maximum || Math.max(options.minimumMaximum || 1, ...finite);
+    const slot = plotWidth / data.length, barWidth = Math.max(3, slot * 0.66);
+    const bars = data.map((item, index) => {
+      const value = Number.isFinite(item.value) ? item.value : 0;
+      const barHeight = clamp(value / maxValue, 0, 1) * plotHeight;
+      const x = left + index * slot + (slot - barWidth) / 2, y = top + plotHeight - barHeight;
+      const valueLabel = options.showValues ? `<text x="${x + barWidth / 2}" y="${Math.max(10, y - 4)}" text-anchor="middle" class="chart-value-label">${Number.isFinite(item.value) ? Math.round(item.value) + (options.suffix || "") : "—"}</text>` : "";
+      const showLabel = data.length <= 5 || index === 0 || index === data.length - 1 || index === Math.floor(data.length / 2);
+      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="2" fill="${options.color || "#287dcc"}"/>${valueLabel}${showLabel ? `<text x="${x + barWidth / 2}" y="136" text-anchor="middle" class="chart-axis-label">${escapeHtml(item.label)}</text>` : ""}`;
+    }).join("");
+    host.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img"><line x1="${left}" y1="${top + plotHeight}" x2="${width - right}" y2="${top + plotHeight}" class="chart-grid"/><text x="2" y="${top + 4}" class="chart-axis-label">${formatNumber(maxValue, 0)}</text><text x="13" y="${top + plotHeight}" class="chart-axis-label">0</text>${bars}</svg>`;
+  }
+
+  function renderLineChart(host, rows, series, options = {}) {
+    const values = series.flatMap(line => rows.map(row => row[line.key])).filter(Number.isFinite);
+    if (!rows.length || !values.length) return renderEmptyChart(host, "Dati non disponibili");
+    let minValue = Number.isFinite(options.minimum) ? options.minimum : Math.min(...values);
+    let maxValue = Number.isFinite(options.maximum) ? options.maximum : Math.max(...values);
+    if (options.dynamicRange) { const pad = Math.max(1, (maxValue - minValue) * 0.12); minValue -= pad; maxValue += pad; }
+    if (maxValue === minValue) maxValue = minValue + 1;
+    const width = 320, height = 140, left = 30, right = 8, top = 12, bottom = 24;
+    const plotWidth = width - left - right, plotHeight = height - top - bottom;
+    const xFor = index => left + (rows.length === 1 ? plotWidth / 2 : index / (rows.length - 1) * plotWidth);
+    const yFor = value => top + (maxValue - value) / (maxValue - minValue) * plotHeight;
+    const grids = [0, 0.5, 1].map(part => { const y = top + part * plotHeight; const value = maxValue - part * (maxValue - minValue); return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="chart-grid"/><text x="2" y="${y + 3}" class="chart-axis-label">${formatNumber(value, 0)}${options.suffix || ""}</text>`; }).join("");
+    const lines = series.map(line => {
+      const points = rows.map((row, index) => Number.isFinite(row[line.key]) ? `${xFor(index)},${yFor(row[line.key])}` : null).filter(Boolean);
+      return `<polyline points="${points.join(" ")}" fill="none" stroke="${line.color}" class="chart-line"/><circle cx="${points.length ? points[points.length - 1].split(",")[0] : 0}" cy="${points.length ? points[points.length - 1].split(",")[1] : 0}" r="3" fill="${line.color}"/>`;
+    }).join("");
+    const keys = series.map(line => `<span><i style="background:${line.color}"></i>${escapeHtml(line.label)}</span>`).join("");
+    host.innerHTML = `<div class="chart-key">${keys}</div><svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img">${grids}${lines}<text x="${left}" y="136" class="chart-axis-label">${shortDate(rows[0].date)}</text><text x="${width - right}" y="136" text-anchor="end" class="chart-axis-label">${shortDate(rows[rows.length - 1].date)}</text></svg>`;
+  }
+
+  function clearWeatherCharts(message) {
+    $("#rainChartTotal").textContent = "";
+    $("#humidityLatest").textContent = "";
+    ["#rainChart", "#temperatureChart", "#humidityChart"].forEach(selector => renderEmptyChart($(selector), message));
+  }
+
+  function renderEmptyChart(host, message) { host.innerHTML = `<div class="chart-empty">${escapeHtml(message)}</div>`; }
+  function metricHtml(label, value) { return `<div class="analysis-metric"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`; }
+  function forestLabelForId(id) { const key = state.manifest.data.forest_profile_keys[String(id)] || "forest_unclassified_score"; return FOREST_PROFILE_LABELS[key] || "Non classificato"; }
+  function soilLabel(id) { return ["Ignoto", "Siliceo / acido", "Mesico", "Carbonatico", "Xerico"][Number(id)] || "Ignoto"; }
+  function finiteOrNull(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
+  function total(rows, key) { const values = rows.map(row => row[key]).filter(Number.isFinite); return values.length ? values.reduce((sum, value) => sum + value, 0) : null; }
+  function average(rows, key) { const values = rows.map(row => row[key]).filter(Number.isFinite); return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null; }
+  function maximum(rows, key) { const values = rows.map(row => row[key]).filter(Number.isFinite); return values.length ? Math.max(...values) : null; }
+  function formatNumber(value, decimals) { return value == null ? "—" : Number(value).toLocaleString("it-IT", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }); }
+  function shortDate(value) { const parts = String(value || "").split("-"); return parts.length === 3 ? `${parts[2]}/${parts[1]}` : value; }
+  function addIsoDays(value, days) { const date = new Date(value + "T12:00:00"); date.setDate(date.getDate() + days); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 
   function openPointModal(lat, lon) {
     state.selected = { lat: Number(lat), lon: Number(lon) };
@@ -805,7 +969,7 @@
 
   function persistPoints() { localStorage.setItem(STORAGE.points, JSON.stringify(state.points)); }
 
-  async function exportPoints() {
+  function exportPoints() {
     if (!state.points.length) return showToast("Non ci sono punti da esportare");
     const contents = JSON.stringify({ type: "FeatureCollection", name: "fungi_punti",
       exported_at: new Date().toISOString(), features: state.points }, null, 2);
@@ -813,22 +977,11 @@
     if (window.AndroidApp && typeof window.AndroidApp.exportGeoJson === "function") {
       window.AndroidApp.exportGeoJson(contents, filename);
     } else {
-      const file = new File([contents], filename, { type: "application/json" });
-      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-        try {
-          await navigator.share({ title: "Punti fungaia", text: "Esportazione Fungi AI", files: [file] });
-          showToast("GeoJSON condiviso");
-          return;
-        } catch (error) {
-          if (error && error.name === "AbortError") return;
-        }
-      }
       const link = document.createElement("a");
-      link.href = URL.createObjectURL(file);
+      link.href = URL.createObjectURL(new Blob([contents], { type: "application/geo+json" }));
       link.download = filename;
       link.click();
       setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-      showToast("GeoJSON scaricato");
     }
   }
 
