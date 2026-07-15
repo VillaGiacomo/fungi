@@ -1,4 +1,4 @@
-const APP_CACHE = "fungi-ai-app-v11-password-reset";
+const APP_CACHE = "fungi-ai-app-v12-map-controls";
 const RUNTIME_CACHE = "fungi-ai-runtime-v2";
 const MAX_RUNTIME_ENTRIES = 350;
 const APP_FILES = [

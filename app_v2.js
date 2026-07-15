@@ -16,6 +16,7 @@
     stations: "fungi.mobile.stations.v1",
     stationCorrection: "fungi.mobile.station-correction.v1",
     showStations: "fungi.mobile.show-stations.v1",
+    stationVariable: "fungi.mobile.station-variable.v1",
     stationHistory: "fungi.mobile.station-history.v1"
   };
 
@@ -132,12 +133,50 @@
     static_habitat: ["Habitat statico", "Idoneità stabile 0–100 costruita con bosco, suolo, quota e copertura del territorio, senza usare il meteo del giorno."],
     dynamic_habitat: ["Habitat dinamico", "Habitat statico corretto dalle condizioni del giorno, soprattutto fascia altitudinale termica ed esposizione al vento."],
     weather: ["Meteo spazializzato", "Indice meteo 0–100 ottenuto da pioggia 7/20 giorni, temperature, umidità, vento e fase della buttata, interpolato sull’area."],
+    weather_temperature: ["Temperatura media", "Temperatura media ICON-2I degli ultimi 7 giorni, interpolata tra i 25 punti della griglia locale. Scala da −5 a 30 °C."],
+    weather_rain: ["Pioggia cumulata", "Precipitazione ICON-2I cumulata negli ultimi 7 giorni. La scala visualizzata va da 0 a 100 mm; valori superiori restano nel colore massimo."],
+    weather_wind: ["Raffiche di vento", "Raffica massima ICON-2I nelle ultime 48 ore, interpolata sull’area. Mostra il vento grezzo prima della correzione per esposizione del versante."],
+    weather_radiation: ["Radiazione solare", "Somma giornaliera media della radiazione solare a onda corta negli ultimi 7 giorni, espressa in MJ/m². Aiuta a leggere il potenziale disseccamento."],
     dynamic_elevation: ["Quota dinamica", "Quanto la quota di ogni cella è favorevole oggi: la fascia ottimale sale o scende in base alla temperatura."],
     wind: ["Penalità vento", "Riduzione 0–100 dovuta a raffiche ed esposizione: valori alti indicano maggiore effetto disseccante."],
     dynamic_score: ["Indice dinamico", "Componente giornaliera prima del risultato finale: riassume meteo e correzioni dinamiche dell’habitat."]
   };
 
-  const DYNAMIC_OVERLAYS = new Set(["probability", "dynamic_habitat", "weather", "dynamic_elevation", "wind", "dynamic_score"]);
+  const DYNAMIC_OVERLAYS = new Set(["probability", "dynamic_habitat", "weather", "weather_temperature",
+    "weather_rain", "weather_wind", "weather_radiation", "dynamic_elevation", "wind", "dynamic_score"]);
+  const OVERLAY_GROUPS = [
+    ["INDICI", [
+      ["probability", "Probabilità porcini"], ["static_habitat", "Habitat statico"],
+      ["dynamic_habitat", "Habitat dinamico"], ["dynamic_score", "Indice dinamico"]
+    ]],
+    ["SUOLO E TERRITORIO", [
+      ["forest", "Tipo forestale"], ["land_cover", "Uso del suolo"], ["elevation", "Quota / DEM"],
+      ["aspect", "Esposizione versanti"], ["slope", "Pendenza"], ["dynamic_elevation", "Quota dinamica"]
+    ]],
+    ["METEO", [
+      ["weather", "Indice meteo"], ["weather_temperature", "Temperatura media 7g"],
+      ["weather_rain", "Pioggia cumulata 7g"], ["weather_wind", "Raffica massima 48h"],
+      ["weather_radiation", "Radiazione media 7g"], ["wind", "Penalità vento sul versante"]
+    ]]
+  ];
+  const STATION_VARIABLES = {
+    temperature_c: { label: "Temperatura", unit: " °C", decimals: 1, bands: [
+      [5, "#355f9e", "<5°"], [12, "#49a0b5", "5–12°"], [18, "#62a65d", "12–18°"],
+      [24, "#d4aa43", "18–24°"], [Infinity, "#c95b3e", "≥24°"]
+    ] },
+    humidity_pct: { label: "Umidità", unit: "%", decimals: 0, bands: [
+      [40, "#c95b3e", "<40%"], [60, "#d4aa43", "40–60%"], [80, "#62a65d", "60–80%"],
+      [Infinity, "#355f9e", "≥80%"]
+    ] },
+    rain_mm: { label: "Pioggia", unit: " mm", decimals: 1, bands: [
+      [0.1, "#b8bdb9", "0 mm"], [2, "#9ecae1", "0–2 mm"], [10, "#4292c6", "2–10 mm"],
+      [25, "#2171b5", "10–25 mm"], [Infinity, "#6a51a3", "≥25 mm"]
+    ] },
+    wind_kmh: { label: "Vento", unit: " km/h", decimals: 0, bands: [
+      [10, "#62a65d", "<10"], [25, "#d4aa43", "10–25"], [40, "#e7833f", "25–40"],
+      [Infinity, "#c54136", "≥40 km/h"]
+    ] }
+  };
   const ASPECT_LEGEND = [
     ["#365c8d", "Nord"], ["#3f8599", "Nord-est"], ["#569d70", "Est"], ["#b7b253", "Sud-est"],
     ["#d7843e", "Sud"], ["#b85b44", "Sud-ovest"], ["#80537e", "Ovest"], ["#4e4e8b", "Nord-ovest"]
@@ -156,6 +195,7 @@
     stationHistory: {},
     stationCorrection: false,
     showStations: true,
+    stationVariable: "temperature_c",
     raster: null,
     selected: null,
     gps: null,
@@ -245,6 +285,8 @@
       state.stationHistory = loadJson(STORAGE.stationHistory, {});
       state.stationCorrection = localStorage.getItem(STORAGE.stationCorrection) === "true";
       state.showStations = localStorage.getItem(STORAGE.showStations) !== "false";
+      const storedStationVariable = localStorage.getItem(STORAGE.stationVariable);
+      state.stationVariable = STATION_VARIABLES[storedStationVariable] ? storedStationVariable : "temperature_c";
       loadStoredScores();
       state.activeBasemap = localStorage.getItem(STORAGE.basemap) || "osm";
       state.activeOverlay = localStorage.getItem(STORAGE.overlay) || "probability";
@@ -305,7 +347,12 @@
       localStorage.setItem(STORAGE.showStations, String(state.showStations));
       renderStationMarkers();
     });
-    $("#resetMap").addEventListener("click", () => state.map.fitBounds(state.projectBounds, { padding: [8, 8] }));
+    $("#stationVariableSelect").addEventListener("change", event => {
+      state.stationVariable = STATION_VARIABLES[event.target.value] ? event.target.value : "temperature_c";
+      localStorage.setItem(STORAGE.stationVariable, state.stationVariable);
+      renderStationMarkers();
+      renderStationLegend();
+    });
     $("#gpsButton").addEventListener("click", requestLocation);
     $("#addAtMap").addEventListener("click", () => {
       if (!state.selected) return showToast("Prima tocca la mappa o usa il GPS");
@@ -330,13 +377,21 @@
 
   function populateControls() {
     const overlaySelect = $("#layerSelect");
-    overlaySelect.innerHTML = '<option value="probability">Probabilità porcini</option>';
-    for (const layer of state.manifest.layers) {
-      if (layer.key.startsWith("bundled_")) continue;
-      const option = document.createElement("option");
-      option.value = layer.key;
-      option.textContent = layer.label;
-      overlaySelect.appendChild(option);
+    const availableLayers = new Set((state.manifest.layers || []).map(layer => layer.key));
+    availableLayers.add("probability");
+    ["weather_temperature", "weather_rain", "weather_wind", "weather_radiation"].forEach(key => availableLayers.add(key));
+    overlaySelect.innerHTML = "";
+    for (const [groupLabel, entries] of OVERLAY_GROUPS) {
+      const group = document.createElement("optgroup");
+      group.label = groupLabel;
+      for (const [key, label] of entries) {
+        if (!availableLayers.has(key)) continue;
+        const option = document.createElement("option");
+        option.value = key;
+        option.textContent = label;
+        group.appendChild(option);
+      }
+      if (group.children.length) overlaySelect.appendChild(group);
     }
     if (![...overlaySelect.options].some(option => option.value === state.activeOverlay)) {
       state.activeOverlay = "probability";
@@ -347,7 +402,9 @@
     $("#overlayOpacity").value = String(Math.round(state.overlayOpacity * 100));
     $("#stationCorrection").checked = state.stationCorrection;
     $("#showStations").checked = state.showStations;
+    $("#stationVariableSelect").value = state.stationVariable;
     updateStationControls();
+    renderStationLegend();
     const profileSelect = $("#profileSelect");
     profileSelect.innerHTML = "";
     for (const entry of Object.values(state.profiles)) {
@@ -493,7 +550,7 @@
           dynamicMapStore[key] = {};
           for (const [layerKey, values] of Object.entries(day.layers || {})) {
             dynamicMapStore[key][layerKey] = rgbaToDataUrl(window.FungiModel.colorize(
-              values, state.manifest.model.width, state.manifest.model.height));
+              values, state.manifest.model.width, state.manifest.model.height, layerKey));
           }
           scoreStore[key] = window.FungiModel.bytesToBase64(day.probability);
         }
@@ -697,20 +754,22 @@
     if (!state.stationsLayer) return;
     state.stationsLayer.clearLayers();
     if (!state.showStations) return;
+    const variable = STATION_VARIABLES[state.stationVariable] || STATION_VARIABLES.temperature_c;
     for (const station of state.stations) {
       const ageDays = stationAgeDays(station);
       if (ageDays >= 15) continue;
-      const temperature = Number(station.latest.temperature_c);
+      const value = Number(station.latest[state.stationVariable]);
       const stale = ageDays >= 1;
       const marker = stale
         ? L.marker([station.lat, station.lon], { bubblingMouseEvents: false,
           icon: L.divIcon({ className: "station-stale-icon", html: "×", iconSize: [18, 18], iconAnchor: [9, 9] }) })
           .addTo(state.stationsLayer)
         : L.circleMarker([station.lat, station.lon], { radius: 4.5, weight: 1.5, color: "#fff",
-          fillColor: Number.isFinite(temperature) ? stationTemperatureColor(temperature) : "#4f7183",
+          fillColor: Number.isFinite(value) ? stationVariableColor(variable, value) : "#7b8580",
           fillOpacity: 0.95, pane: "markerPane", bubblingMouseEvents: false }).addTo(state.stationsLayer);
       const status = stale ? `ferma da ${Math.max(1, Math.floor(ageDays))} g`
-        : (Number.isFinite(temperature) ? `${formatNumber(temperature, 1)} °C` : "dato recente");
+        : (Number.isFinite(value) ? `${variable.label}: ${formatNumber(value, variable.decimals)}${variable.unit}`
+          : `${variable.label}: dato assente`);
       marker.bindTooltip(`${escapeHtml(station.name)} · ${escapeHtml(status)}`);
       marker.bindPopup(`<strong>${escapeHtml(station.name)}</strong><br><span>${escapeHtml(status)}</span><br><small>${escapeHtml(station.network)}</small>`);
       marker.on("click", event => {
@@ -720,12 +779,19 @@
     }
   }
 
-  function stationTemperatureColor(value) {
-    if (value < 5) return "#355f9e";
-    if (value < 12) return "#49a0b5";
-    if (value < 18) return "#62a65d";
-    if (value < 24) return "#d4aa43";
-    return "#c95b3e";
+  function stationVariableColor(variable, value) {
+    const band = variable.bands.find(([maximum]) => value < maximum) || variable.bands[variable.bands.length - 1];
+    return band[1];
+  }
+
+  function renderStationLegend() {
+    const container = $("#stationLegend");
+    if (!container) return;
+    const variable = STATION_VARIABLES[state.stationVariable] || STATION_VARIABLES.temperature_c;
+    container.innerHTML = variable.bands.map(([, color, label]) =>
+      `<span><i style="--station-color:${color}"></i>${escapeHtml(label)}</span>`).join("")
+      + '<span><i style="--station-color:#7b8580"></i>dato assente</span>'
+      + '<span><b>×</b> ferma ≥24h</span><small>Nascosta dopo 15 giorni</small>';
   }
 
   function stationLastReport(station) {
@@ -1110,8 +1176,9 @@
     const container = $("#layerLegend");
     if (!container || !state.manifest) return;
     const layer = state.manifest.layers.find(item => item.key === state.activeOverlay);
-    const title = state.activeOverlay === "probability" ? "Probabilità porcini" : (layer ? layer.label : "Indice");
-    const description = LAYER_DESCRIPTIONS[state.activeOverlay] || [title, "Layer sperimentale del modello porcini."];
+    const description = LAYER_DESCRIPTIONS[state.activeOverlay]
+      || [layer ? layer.label : "Indice", "Layer sperimentale del modello porcini."];
+    const title = state.activeOverlay === "probability" ? "Probabilità porcini" : (layer ? layer.label : description[0]);
     $("#layerDescription").innerHTML = `<strong>${escapeHtml(description[0])}</strong>${escapeHtml(description[1])}`;
     if (state.activeOverlay === "forest") return renderCategoryLegend(container, title, FOREST_LEGEND);
     if (state.activeOverlay === "land_cover") return renderCategoryLegend(container, title, LAND_COVER_LEGEND);
@@ -1119,7 +1186,11 @@
     const settings = {
       probability: ["linear-gradient(90deg,#fff,#fff176,#ffb74d,#f4511e,#b71c1c)", ["0", "25", "50", "75", "100"]],
       elevation: ["linear-gradient(90deg,#2c7bb6,#abd9e9,#ffffbf,#fdae61,#8c510a)", ["bassa", "medio-bassa", "media", "alta", "molto alta"]],
-      slope: ["linear-gradient(90deg,#f7fcf5,#c7e9c0,#74c476,#238b45,#00441b)", ["piana", "dolce", "media", "forte", "ripida"]]
+      slope: ["linear-gradient(90deg,#f7fcf5,#c7e9c0,#74c476,#238b45,#00441b)", ["piana", "dolce", "media", "forte", "ripida"]],
+      weather_temperature: ["linear-gradient(90deg,#313695,#4575b4,#74c476,#fee08b,#d73027)", ["−5°", "4°", "13°", "21°", "30°"]],
+      weather_rain: ["linear-gradient(90deg,#f7fbff,#c6dbef,#6baed6,#2171b5,#08306b)", ["0", "25", "50", "75", "≥100 mm"]],
+      weather_wind: ["linear-gradient(90deg,#4daf4a,#d9ef8b,#fdae61,#d73027,#762a83)", ["0", "20", "40", "60", "≥80 km/h"]],
+      weather_radiation: ["linear-gradient(90deg,#54278f,#2b8cbe,#7fcdbb,#fed976,#f03b20)", ["0", "7,5", "15", "22,5", "≥30 MJ/m²"]]
     }[state.activeOverlay] || ["linear-gradient(90deg,#fff,#fff176,#ffb74d,#f4511e,#b71c1c)", ["0", "25", "50", "75", "100"]];
     container.innerHTML = `<strong class="legend-title">${escapeHtml(title)}</strong><div class="legend-gradient" style="background:${settings[0]}"></div><div class="legend-scale">${settings[1].map(label => `<span>${escapeHtml(label)}</span>`).join("")}</div>`;
   }

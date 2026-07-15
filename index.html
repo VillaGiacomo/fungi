@@ -52,66 +52,55 @@
   <main>
     <section id="pageMap" class="page active" data-page="map">
       <div class="status-card">
-        <div>
+        <div class="status-copy">
           <span id="activeProfileEyebrow" class="eyebrow">AI-mode locale</span>
           <strong id="modelStatus">Mappe incluse nell’app</strong>
           <small id="modelUpdated">Nessun download necessario per consultarle</small>
         </div>
-        <button id="updateWeather" class="primary compact">
-          <span class="button-icon">⇩</span> Scarica ICON-2I
-        </button>
-      </div>
-
-      <div class="station-control-card">
-        <div><strong>Stazioni MeteoHub</strong><small id="stationStatus">Stazioni non ancora scaricate</small></div>
-        <label class="switch-row"><input id="showStations" type="checkbox" checked><span>Mostra</span></label>
-        <label class="switch-row"><input id="stationCorrection" type="checkbox"><span>Correggi calcolo</span></label>
-        <div class="station-map-legend" aria-label="Legenda temperatura e attività stazioni">
-          <span><i style="--station-color:#355f9e"></i>&lt;5°</span>
-          <span><i style="--station-color:#49a0b5"></i>5–12°</span>
-          <span><i style="--station-color:#62a65d"></i>12–18°</span>
-          <span><i style="--station-color:#d4aa43"></i>18–24°</span>
-          <span><i style="--station-color:#c95b3e"></i>≥24°</span>
-          <span><b>×</b> ferma ≥24h</span>
-          <small>Nascosta dopo 15 giorni</small>
+        <div class="status-actions">
+          <button id="updateWeather" class="primary compact">
+            <span class="button-icon">⇩</span> Scarica ICON-2I
+          </button>
+          <label class="switch-row station-correction-inline">
+            <input id="stationCorrection" type="checkbox"><span>Correggi ICON con stazioni</span>
+          </label>
         </div>
       </div>
 
-      <div class="map-controls map-controls-main">
-        <label>
-          <span>Sfondo</span>
-          <select id="basemapSelect">
-            <option value="osm">Politica / strade</option>
-            <option value="satellite">Satellite Sentinel-2</option>
-            <option value="offline">Quota offline</option>
-          </select>
-        </label>
-        <label>
+      <div class="layer-control-card">
+        <label class="layer-main-control">
           <span>Layer sovrapposto</span>
           <select id="layerSelect">
             <option value="probability">Probabilità porcini</option>
           </select>
         </label>
-      </div>
-      <div class="map-controls map-controls-secondary">
-        <label id="dayControl">
-          <span>Giorno</span>
-          <select id="daySelect">
-            <option value="today">Oggi</option>
-            <option value="tomorrow">Domani</option>
-            <option value="day_after_tomorrow">Dopodomani</option>
-          </select>
-        </label>
-        <label>
-          <span>Trasparenza layer</span>
-          <input id="overlayOpacity" type="range" min="15" max="100" step="5" value="72">
-        </label>
+        <div class="map-controls map-controls-secondary">
+          <label id="dayControl">
+            <span>Giorno</span>
+            <select id="daySelect">
+              <option value="today">Oggi</option>
+              <option value="tomorrow">Domani</option>
+              <option value="day_after_tomorrow">Dopodomani</option>
+            </select>
+          </label>
+          <label>
+            <span>Trasparenza layer</span>
+            <input id="overlayOpacity" type="range" min="15" max="100" step="5" value="72">
+          </label>
+        </div>
       </div>
 
       <div id="mapViewport" class="map-viewport" aria-label="Mappa offline">
         <div id="leafletMap"></div>
-        <div class="map-hint">Sfondo online · layer locali sovrapposti</div>
-        <button id="resetMap" class="map-tool reset" aria-label="Inquadra area porcini">⌂</button>
+        <label class="map-basemap-control">
+          <span>Sfondo</span>
+          <select id="basemapSelect" aria-label="Scegli sfondo cartografico">
+            <option value="osm">Strade</option>
+            <option value="satellite">Satellite</option>
+            <option value="offline">Quota offline</option>
+          </select>
+        </label>
+        <div class="map-hint">Tocca un punto per leggere i dati</div>
         <button id="gpsButton" class="map-tool gps" aria-label="Vai alla mia posizione">◎</button>
       </div>
 
@@ -123,6 +112,23 @@
 
       <div id="layerLegend" class="layer-legend" aria-label="Legenda del layer"></div>
       <div id="layerDescription" class="layer-description" aria-live="polite"></div>
+
+      <div class="station-control-card">
+        <div class="station-control-heading">
+          <div><strong>Stazioni MeteoHub</strong><small id="stationStatus">Stazioni non ancora scaricate</small></div>
+          <label class="switch-row"><input id="showStations" type="checkbox" checked><span>Mostra</span></label>
+        </div>
+        <label class="station-variable-control">
+          <span>Dato visualizzato sulle stazioni</span>
+          <select id="stationVariableSelect">
+            <option value="temperature_c">Temperatura</option>
+            <option value="humidity_pct">Umidità</option>
+            <option value="rain_mm">Pioggia</option>
+            <option value="wind_kmh">Vento</option>
+          </select>
+        </label>
+        <div id="stationLegend" class="station-map-legend" aria-label="Legenda dati e attività stazioni"></div>
+      </div>
 
       <section id="pointAnalysis" class="point-analysis hidden" aria-live="polite">
         <div class="analysis-heading">

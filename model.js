@@ -24,7 +24,8 @@
       "temperature_2m_min",
       "relative_humidity_2m_mean",
       "wind_gusts_10m_max",
-      "wind_direction_10m_dominant"
+      "wind_direction_10m_dominant",
+      "shortwave_radiation_sum"
     ].join(",");
     const query = new URLSearchParams({
       latitude: latitudes.join(","),
@@ -85,6 +86,7 @@
     const mean7 = rolling(daily, "temperature_2m_mean", targetDate, 7, "mean");
     const humidity7 = rolling(daily, "relative_humidity_2m_mean", targetDate, 7, "mean");
     const gust2 = rolling(daily, "wind_gusts_10m_max", targetDate, 2, "max");
+    const radiation7 = rolling(daily, "shortwave_radiation_sum", targetDate, 7, "mean");
 
     const rain7Score = preferredRange(rain7, profile.rain_7d_hard_min_mm, null,
       profile.rain_7d_preferred_min_mm, profile.rain_7d_preferred_max_mm);
@@ -100,7 +102,7 @@
     const gust = Number.isFinite(gust2) ? gust2 : 0;
     const windDirection = rolling(daily, "wind_direction_10m_dominant", targetDate, 2, "circular");
     return { weather, temperature: Number.isFinite(mean7) ? mean7 : (max7 + min7) / 2,
-      humidity, gust, windDirection, flush };
+      humidity, gust, windDirection, rain7, radiation: radiation7, flush };
   }
 
   function renderDay(manifest, profile, sampleFeatures, targetDate, habitatPixels, elevationPixels, aspectPixels, points) {
@@ -118,6 +120,10 @@
     const windLayer = new Uint8Array(total);
     const habitatLayer = new Uint8Array(total);
     const dynamicLayer = new Uint8Array(total);
+    const temperatureLayer = new Uint8Array(total);
+    const rainLayer = new Uint8Array(total);
+    const rawWindLayer = new Uint8Array(total);
+    const radiationLayer = new Uint8Array(total);
     const userBonus = userBonusGrid(points, targetDate, manifest);
 
     for (let y = 0; y < height; y += 1) {
@@ -125,16 +131,21 @@
       for (let x = 0; x < width; x += 1) {
         const index = y * width + x;
         const habitat = habitatPixels[index] / 255;
-        if (habitat <= 0 || elevationPixels[index] < 0) {
-          probability[index] = 0;
-          continue;
-        }
+        if (elevationPixels[index] < 0) continue;
         const gx = x / Math.max(width - 1, 1) * (n - 1);
         const weather = bilinear(sampleFeatures, "weather", gx, gy, n);
         const temperature = bilinear(sampleFeatures, "temperature", gx, gy, n);
         const humidity = bilinear(sampleFeatures, "humidity", gx, gy, n);
         const gust = bilinear(sampleFeatures, "gust", gx, gy, n);
+        const rain7 = bilinear(sampleFeatures, "rain7", gx, gy, n);
+        const radiation = bilinear(sampleFeatures, "radiation", gx, gy, n);
         const windDirection = bilinearAngle(sampleFeatures, "windDirection", gx, gy, n);
+        weatherLayer[index] = normalizedLayerValue(weather, 0, 1);
+        temperatureLayer[index] = normalizedLayerValue(temperature, -5, 30);
+        rainLayer[index] = normalizedLayerValue(rain7, 0, 100);
+        rawWindLayer[index] = normalizedLayerValue(gust, 0, 80);
+        radiationLayer[index] = normalizedLayerValue(radiation, 0, 30);
+        if (habitat <= 0) continue;
         const elevationScore = dynamicElevationScore(elevationPixels[index], temperature, profile);
         const aspectMultiplier = dynamicAspectMultiplier(aspectPixels[index], temperature, humidity);
         const windPenalty = windExposurePenalty(aspectPixels[index], windDirection, gust, weather);
@@ -143,7 +154,6 @@
         const habitatEffect = Math.pow(dynamicHabitat, profile.habitat_power);
         const score = dynamicScore * habitatEffect;
         probability[index] = Math.round(score * 100);
-        weatherLayer[index] = Math.round(clamp(weather, 0, 1) * 100);
         elevationLayer[index] = Math.round(clamp(elevationScore, 0, 1) * 100);
         aspectLayer[index] = Math.round(clamp(aspectMultiplier / 1.08, 0, 1) * 100);
         windLayer[index] = Math.round(clamp(windPenalty / 0.35, 0, 1) * 100);
@@ -157,8 +167,17 @@
       dynamic_aspect: aspectLayer,
       wind: windLayer,
       dynamic_habitat: habitatLayer,
-      dynamic_score: dynamicLayer
+      dynamic_score: dynamicLayer,
+      weather_temperature: temperatureLayer,
+      weather_rain: rainLayer,
+      weather_wind: rawWindLayer,
+      weather_radiation: radiationLayer
     } };
+  }
+
+  function normalizedLayerValue(value, minimum, maximum) {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round(1 + clamp((value - minimum) / Math.max(maximum - minimum, 1), 0, 1) * 99);
   }
 
   function dynamicAspectMultiplier(aspect, temperature, humidity) {
@@ -430,15 +449,26 @@
     return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
-  function colorize(probability, width, height) {
+  function colorize(probability, width, height, paletteKey) {
     const rgba = new Uint8ClampedArray(width * height * 4);
-    const stops = [
+    const defaultStops = [
       [0, 255, 255, 255],
       [25, 255, 241, 118],
       [50, 255, 183, 77],
       [75, 244, 81, 30],
       [100, 183, 28, 28]
     ];
+    const palettes = {
+      weather_temperature: [[1, 49, 54, 149], [25, 69, 117, 180], [50, 116, 196, 118],
+        [75, 254, 224, 139], [100, 215, 48, 39]],
+      weather_rain: [[1, 247, 251, 255], [25, 198, 219, 239], [50, 107, 174, 214],
+        [75, 33, 113, 181], [100, 8, 48, 107]],
+      weather_wind: [[1, 77, 175, 74], [25, 217, 239, 139], [50, 253, 174, 97],
+        [75, 215, 48, 39], [100, 118, 42, 131]],
+      weather_radiation: [[1, 84, 39, 143], [25, 43, 140, 190], [50, 127, 205, 187],
+        [75, 254, 217, 118], [100, 240, 59, 32]]
+    };
+    const stops = palettes[paletteKey] || defaultStops;
     for (let index = 0; index < probability.length; index += 1) {
       const value = probability[index];
       const target = index * 4;
