@@ -12,6 +12,10 @@
     basemap: "fungi.mobile.basemap.v1",
     overlay: "fungi.mobile.overlay.v1",
     opacity: "fungi.mobile.overlay-opacity.v1"
+    ,dynamicMaps: "fungi.mobile.dynamic-maps.v1"
+    ,stations: "fungi.mobile.stations.v1"
+    ,stationCorrection: "fungi.mobile.station-correction.v1"
+    ,showStations: "fungi.mobile.show-stations.v1"
   };
 
   const PROFILE_DESCRIPTIONS = {
@@ -122,6 +126,7 @@
     forest: ["Tipo forestale", "Classificazione del bosco usata per valutare l’habitat dei porcini. Le zone sconosciute o non classificate sono trasparenti, così resta visibile lo sfondo."],
     land_cover: ["Uso del suolo", "Distingue boschi, aree agricole, rocce, acqua e zone urbanizzate. Serve a escludere o ridurre le superfici inadatte."],
     elevation: ["Quota", "Altitudine del terreno. I colori rappresentano quote relative da basse ad alte nell’area coperta."],
+    aspect: ["Esposizione versanti", "Orientamento del pendio: nord, nord-est, est, sud-est, sud, sud-ovest, ovest e nord-ovest. Entra anche nella correzione dinamica per caldo, umidità e vento."],
     slope: ["Pendenza", "Inclinazione del terreno: da aree pianeggianti a versanti ripidi."],
     static_habitat: ["Habitat statico", "Idoneità stabile 0–100 costruita con bosco, suolo, quota e copertura del territorio, senza usare il meteo del giorno."],
     dynamic_habitat: ["Habitat dinamico", "Habitat statico corretto dalle condizioni del giorno, soprattutto fascia altitudinale termica ed esposizione al vento."],
@@ -131,14 +136,24 @@
     dynamic_score: ["Indice dinamico", "Componente giornaliera prima del risultato finale: riassume meteo e correzioni dinamiche dell’habitat."]
   };
 
+  const DYNAMIC_OVERLAYS = new Set(["probability", "dynamic_habitat", "weather", "dynamic_elevation", "wind", "dynamic_score"]);
+  const ASPECT_LEGEND = [
+    ["#365c8d", "Nord"], ["#3f8599", "Nord-est"], ["#569d70", "Est"], ["#b7b253", "Sud-est"],
+    ["#d7843e", "Sud"], ["#b85b44", "Sud-ovest"], ["#80537e", "Ovest"], ["#4e4e8b", "Nord-ovest"]
+  ];
+
   const state = {
     manifest: null,
     profiles: {},
     activeProfile: "ai_mode",
     points: [],
     maps: {},
+    dynamicMaps: {},
     scores: {},
     weather: null,
+    stations: [],
+    stationCorrection: false,
+    showStations: true,
     raster: null,
     selected: null,
     gps: null,
@@ -155,6 +170,8 @@
     accuracyCircle: null,
     selectedMarker: null,
     pointsLayer: null,
+    stationsLayer: null,
+    stationRequestHandlers: {},
     projectBounds: null
   };
 
@@ -187,6 +204,18 @@
         : `Posizione trovata · precisione circa ${precision} m`);
     },
     onLocationError(message) { showToast(message || "Posizione non disponibile"); }
+    ,onJson(requestId, body) {
+      const handler = state.stationRequestHandlers[requestId];
+      if (!handler) return;
+      delete state.stationRequestHandlers[requestId];
+      try { handler.resolve(JSON.parse(body)); } catch (error) { handler.reject(error); }
+    }
+    ,onJsonError(requestId, message) {
+      const handler = state.stationRequestHandlers[requestId];
+      if (!handler) return;
+      delete state.stationRequestHandlers[requestId];
+      handler.reject(new Error(message || "Download stazioni non riuscito"));
+    }
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialize);
@@ -207,7 +236,11 @@
       state.activeProfile = state.profiles[storedActive] ? storedActive : "ai_mode";
       state.points = loadJson(STORAGE.points, []).filter(isPointFeature);
       state.maps = loadJson(STORAGE.maps, {});
+      state.dynamicMaps = loadJson(STORAGE.dynamicMaps, {});
       state.weather = loadJson(STORAGE.weather, null);
+      state.stations = loadJson(STORAGE.stations, []);
+      state.stationCorrection = localStorage.getItem(STORAGE.stationCorrection) === "true";
+      state.showStations = localStorage.getItem(STORAGE.showStations) !== "false";
       loadStoredScores();
       state.activeBasemap = localStorage.getItem(STORAGE.basemap) || "osm";
       state.activeOverlay = localStorage.getItem(STORAGE.overlay) || "probability";
@@ -219,6 +252,8 @@
       initializeMap();
       renderProfileUi();
       renderPoints();
+      renderStationMarkers();
+      if (navigator.onLine) refreshStations(false).catch(() => { /* cached stations remain visible */ });
       updateConnectivity();
       window.addEventListener("online", updateConnectivity);
       window.addEventListener("offline", updateConnectivity);
@@ -255,6 +290,17 @@
       if (state.overlayLayer && state.overlayLayer.setOpacity) state.overlayLayer.setOpacity(state.overlayOpacity);
     });
     $("#updateWeather").addEventListener("click", updateWeather);
+    $("#stationCorrection").addEventListener("change", event => {
+      state.stationCorrection = event.target.checked;
+      localStorage.setItem(STORAGE.stationCorrection, String(state.stationCorrection));
+      updateStationControls();
+      if (state.weather) recalculateActiveProfile(false);
+    });
+    $("#showStations").addEventListener("change", event => {
+      state.showStations = event.target.checked;
+      localStorage.setItem(STORAGE.showStations, String(state.showStations));
+      renderStationMarkers();
+    });
     $("#resetMap").addEventListener("click", () => state.map.fitBounds(state.projectBounds, { padding: [8, 8] }));
     $("#gpsButton").addEventListener("click", requestLocation);
     $("#addAtMap").addEventListener("click", () => {
@@ -295,6 +341,9 @@
     $("#basemapSelect").value = ["osm", "satellite", "offline"].includes(state.activeBasemap)
       ? state.activeBasemap : "osm";
     $("#overlayOpacity").value = String(Math.round(state.overlayOpacity * 100));
+    $("#stationCorrection").checked = state.stationCorrection;
+    $("#showStations").checked = state.showStations;
+    updateStationControls();
     const profileSelect = $("#profileSelect");
     profileSelect.innerHTML = "";
     for (const entry of Object.values(state.profiles)) {
@@ -316,6 +365,7 @@
     L.rectangle(state.projectBounds, { color: "#74452e", weight: 1, dashArray: "5 5", fill: false,
       opacity: 0.55, interactive: false }).addTo(state.map);
     state.pointsLayer = L.layerGroup().addTo(state.map);
+    state.stationsLayer = L.layerGroup().addTo(state.map);
     state.map.on("click", event => selectLocation(event.latlng.lat, event.latlng.lng, true));
     setBasemap(state.activeBasemap);
     setOverlay(state.activeOverlay);
@@ -350,7 +400,7 @@
     state.activeOverlay = key || "probability";
     localStorage.setItem(STORAGE.overlay, state.activeOverlay);
     $("#layerSelect").value = state.activeOverlay;
-    $("#dayControl").classList.toggle("hidden", state.activeOverlay !== "probability");
+    $("#dayControl").classList.toggle("hidden", !DYNAMIC_OVERLAYS.has(state.activeOverlay));
     if (state.overlayLayer) {
       state.map.removeLayer(state.overlayLayer);
       state.overlayLayer = null;
@@ -359,6 +409,13 @@
     if (state.activeOverlay === "probability") {
       const profileMaps = state.maps[state.activeProfile] || {};
       path = profileMaps[state.activeDay] || bundledProbabilityPath(state.activeDay);
+    } else if (DYNAMIC_OVERLAYS.has(state.activeOverlay)) {
+      const profileMaps = state.dynamicMaps[state.activeProfile] || {};
+      path = profileMaps[state.activeDay] && profileMaps[state.activeDay][state.activeOverlay];
+      if (!path) {
+        const layer = state.manifest.layers.find(item => item.key === state.activeOverlay);
+        path = layer && layer.path;
+      }
     } else {
       const layer = state.manifest.layers.find(item => item.key === state.activeOverlay);
       path = layer && layer.path;
@@ -399,9 +456,10 @@
     }
   }
 
-  function calculateAndStore(payload) {
+  async function calculateAndStore(payload) {
     state.weather = payload;
     localStorage.setItem(STORAGE.weather, JSON.stringify(payload));
+    try { await refreshStations(true); } catch (_) { showToast("ICON scaricato; uso le ultime stazioni disponibili"); }
     recalculateActiveProfile(true);
   }
 
@@ -418,24 +476,31 @@
         const profile = activeProfileEntry().profile;
         const habitat = habitatForActiveProfile();
         const result = window.FungiModel.calculate(
-          state.weather, state.manifest, habitat, state.raster.elevation, state.points, profile
+          state.weather, state.manifest, habitat, state.raster.elevation, state.raster.aspect,
+          state.points, profile, { stationCorrection: state.stationCorrection, stations: state.stations }
         );
         const mapStore = {};
+        const dynamicMapStore = {};
         const scoreStore = {};
         for (const key of window.FungiModel.DAY_KEYS) {
           const day = result.days[key];
-          const canvas = document.createElement("canvas");
-          canvas.width = state.manifest.model.width;
-          canvas.height = state.manifest.model.height;
-          canvas.getContext("2d").putImageData(new ImageData(day.rgba, canvas.width, canvas.height), 0, 0);
-          mapStore[key] = canvas.toDataURL("image/png");
+          mapStore[key] = rgbaToDataUrl(day.rgba);
+          dynamicMapStore[key] = {};
+          for (const [layerKey, values] of Object.entries(day.layers || {})) {
+            dynamicMapStore[key][layerKey] = rgbaToDataUrl(window.FungiModel.colorize(
+              values, state.manifest.model.width, state.manifest.model.height));
+          }
           scoreStore[key] = window.FungiModel.bytesToBase64(day.probability);
         }
         state.maps[state.activeProfile] = mapStore;
+        state.dynamicMaps[state.activeProfile] = dynamicMapStore;
         state.scores[state.activeProfile] = Object.fromEntries(window.FungiModel.DAY_KEYS.map(
           key => [key, window.FungiModel.base64ToBytes(scoreStore[key])]
         ));
         localStorage.setItem(STORAGE.maps, JSON.stringify(state.maps));
+        try { localStorage.setItem(STORAGE.dynamicMaps, JSON.stringify(state.dynamicMaps)); } catch (_) {
+          showToast("Layer ricalcolati; memoria piena, restano disponibili fino alla chiusura");
+        }
         const storedScores = loadJson(STORAGE.scores, {});
         storedScores[state.activeProfile] = scoreStore;
         localStorage.setItem(STORAGE.scores, JSON.stringify(storedScores));
@@ -444,14 +509,24 @@
         updated[state.activeProfile] = timestamp;
         localStorage.setItem(STORAGE.updated, JSON.stringify(updated));
         setModelUpdated(timestamp);
-        setOverlay("probability");
-        showToast(`${activeProfileEntry().label}: mappe aggiornate e salvate sul telefono`);
+        setOverlay(state.activeOverlay);
+        const stationText = result.station_diagnostics.enabled
+          ? ` · ${result.station_diagnostics.stations_used} stazioni usate` : " · stazioni solo visualizzate";
+        showToast(`${activeProfileEntry().label}: tutti i layer dinamici ricalcolati${stationText}`);
       } catch (error) {
         updateError(error);
         return;
       }
       resetUpdateButton();
     }, fromDownload ? 30 : 10);
+  }
+
+  function rgbaToDataUrl(rgba) {
+    const canvas = document.createElement("canvas");
+    canvas.width = state.manifest.model.width;
+    canvas.height = state.manifest.model.height;
+    canvas.getContext("2d").putImageData(new ImageData(rgba, canvas.width, canvas.height), 0, 0);
+    return canvas.toDataURL("image/png");
   }
 
   function habitatForActiveProfile() {
@@ -485,8 +560,9 @@
     const width = manifest.model.width;
     const height = manifest.model.height;
     const habitatEntries = Object.entries(manifest.data.habitats || { ai_mode: manifest.data.habitat });
-    const [elevationData, forestData, soilData, allowedData, ...habitatData] = await Promise.all([
+    const [elevationData, aspectData, forestData, soilData, allowedData, ...habitatData] = await Promise.all([
       imagePixels(manifest.data.elevation, width, height),
+      imagePixels(manifest.data.aspect, width, height),
       imagePixels(manifest.data.forest_type, width, height),
       imagePixels(manifest.data.soil_class, width, height),
       imagePixels(manifest.data.allowed_land, width, height),
@@ -494,6 +570,7 @@
     ]);
     const count = width * height;
     const elevation = new Int32Array(count);
+    const aspect = new Float32Array(count);
     const forest = new Uint8Array(count);
     const soil = new Uint8Array(count);
     const allowed = new Uint8Array(count);
@@ -503,6 +580,8 @@
       const source = index * 4;
       const encoded = elevationData[source] * 256 + elevationData[source + 1];
       elevation[index] = encoded === 0 ? -1 : encoded - 1;
+      const aspectEncoded = aspectData[source] * 256 + aspectData[source + 1];
+      aspect[index] = aspectEncoded === 0 ? -1 : (aspectEncoded - 1) / 100;
       forest[index] = forestData[source];
       soil[index] = soilData[source];
       allowed[index] = allowedData[source] > 127 ? 1 : 0;
@@ -510,7 +589,7 @@
         habitats[profileKey][index] = habitatData[habitatIndex][source];
       });
     }
-    return { elevation, forest, soil, allowed, habitats };
+    return { elevation, aspect, forest, soil, allowed, habitats };
   }
 
   function imagePixels(path, width, height) {
@@ -529,6 +608,158 @@
       image.onerror = () => reject(new Error("Impossibile leggere " + path));
       image.src = path;
     });
+  }
+
+  function fetchJson(url) {
+    if (window.AndroidApp && typeof window.AndroidApp.fetchJson === "function") {
+      return new Promise((resolve, reject) => {
+        const requestId = "stations-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+        state.stationRequestHandlers[requestId] = { resolve, reject };
+        window.AndroidApp.fetchJson(requestId, url);
+      });
+    }
+    return fetch(url, { cache: "no-store" }).then(response => {
+      if (!response.ok) throw new Error("MeteoHub HTTP " + response.status);
+      return response.json();
+    });
+  }
+
+  async function refreshStations(showStatus) {
+    if (!navigator.onLine) return state.stations;
+    if (showStatus) $("#stationStatus").textContent = "Scarico osservazioni MeteoHub…";
+    const requests = window.FungiModel.buildStationObservationRequests(state.manifest);
+    const settled = await Promise.allSettled(requests.map(async request => ({ key: request.key,
+      payload: await fetchJson(request.url) })));
+    const results = settled.filter(item => item.status === "fulfilled").map(item => item.value);
+    if (!results.length) throw new Error("Stazioni MeteoHub non raggiungibili");
+    state.stations = mergeStationObservations(results, state.manifest);
+    localStorage.setItem(STORAGE.stations, JSON.stringify(state.stations));
+    renderStationMarkers();
+    updateStationControls();
+    return state.stations;
+  }
+
+  function mergeStationObservations(results, manifest) {
+    const bbox = manifest.area.bbox;
+    const stations = new Map();
+    for (const result of results) {
+      for (const report of (result.payload && result.payload.data) || []) {
+        const stat = report.stat || {};
+        const lat = Number(stat.lat), lon = Number(stat.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < bbox.min_lat || lat > bbox.max_lat
+            || lon < bbox.min_lon || lon > bbox.max_lon) continue;
+        const id = `${stat.net || "rete"}|${lat.toFixed(5)}|${lon.toFixed(5)}`;
+        const details = Object.fromEntries((stat.details || []).map(item => [item.var, item.val]));
+        const station = stations.get(id) || { id, lat, lon, network: stat.net || "rete sconosciuta",
+          name: details.B01019 || stat.net || "Stazione", elevation_m: finiteOrNull(details.B07030), latest: {} };
+        if (details.B01019) station.name = details.B01019;
+        if (Number.isFinite(Number(details.B07030))) station.elevation_m = Number(details.B07030);
+        let selected = null;
+        for (const product of report.prod || []) {
+          const wanted = result.key === "wind_kmh" ? product.var === "B11002" : true;
+          if (!wanted) continue;
+          const values = (product.val || []).filter(item => item.rel == null || Number(item.rel) === 1)
+            .sort((a, b) => String(a.ref).localeCompare(String(b.ref)));
+          if (values.length) selected = values[values.length - 1];
+        }
+        if (!selected || !Number.isFinite(Number(selected.val))) continue;
+        let value = Number(selected.val);
+        if (result.key === "temperature_c") value -= 273.15;
+        if (result.key === "wind_kmh") value *= 3.6;
+        station.latest[result.key] = value;
+        station.latest[result.key + "_at"] = selected.ref;
+        stations.set(id, station);
+      }
+    }
+    return [...stations.values()].sort((a, b) => a.name.localeCompare(b.name, "it"));
+  }
+
+  function updateStationControls() {
+    if (!$("#stationStatus")) return;
+    const count = state.stations.length;
+    $("#stationStatus").textContent = count
+      ? `${count} stazioni nell’area · correzione ${state.stationCorrection ? "attiva" : "disattivata"}`
+      : "Stazioni non ancora scaricate";
+  }
+
+  function renderStationMarkers() {
+    if (!state.stationsLayer) return;
+    state.stationsLayer.clearLayers();
+    if (!state.showStations) return;
+    for (const station of state.stations) {
+      const temperature = Number(station.latest.temperature_c);
+      const marker = L.circleMarker([station.lat, station.lon], { radius: 4.5, weight: 1.5, color: "#fff",
+        fillColor: Number.isFinite(temperature) ? stationTemperatureColor(temperature) : "#4f7183",
+        fillOpacity: 0.95, pane: "markerPane" }).addTo(state.stationsLayer);
+      marker.bindTooltip(`${escapeHtml(station.name)}${Number.isFinite(temperature) ? ` · ${formatNumber(temperature, 1)} °C` : ""}`);
+      marker.on("click", event => {
+        if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+        openStationAnalysis(station);
+      });
+    }
+  }
+
+  function stationTemperatureColor(value) {
+    if (value < 5) return "#355f9e";
+    if (value < 12) return "#49a0b5";
+    if (value < 18) return "#62a65d";
+    if (value < 24) return "#d4aa43";
+    return "#c95b3e";
+  }
+
+  async function openStationAnalysis(station) {
+    $("#pointAnalysis").classList.add("hidden");
+    const panel = $("#stationAnalysis");
+    panel.classList.remove("hidden");
+    $("#stationName").textContent = station.name;
+    $("#stationMeta").textContent = `${station.network} · ${station.lat.toFixed(5)}, ${station.lon.toFixed(5)}`;
+    $("#stationMetrics").innerHTML = [
+      ["Temperatura", Number.isFinite(Number(station.latest.temperature_c)) ? formatNumber(station.latest.temperature_c, 1) + " °C" : "—"],
+      ["Umidità", Number.isFinite(Number(station.latest.humidity_pct)) ? formatNumber(station.latest.humidity_pct, 0) + "%" : "—"],
+      ["Pioggia odierna", Number.isFinite(Number(station.latest.rain_mm)) ? formatNumber(station.latest.rain_mm, 1) + " mm" : "—"],
+      ["Vento", Number.isFinite(Number(station.latest.wind_kmh)) ? formatNumber(station.latest.wind_kmh, 0) + " km/h" : "—"],
+      ["Quota stazione", Number.isFinite(Number(station.elevation_m)) ? formatNumber(station.elevation_m, 0) + " m" : "—"],
+      ["Nel calcolo", state.stationCorrection ? "Sì · entro 32 km" : "No · solo mappa"]
+    ].map(item => metricHtml(...item)).join("");
+    ["#stationRainChart", "#stationTemperatureChart", "#stationHumidityChart", "#stationWindChart"]
+      .forEach(selector => renderEmptyChart($(selector), "Carico osservazioni di oggi…"));
+    setTimeout(() => panel.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    try {
+      const requests = window.FungiModel.buildStationSeriesRequests(station);
+      const settled = await Promise.allSettled(requests.map(async request => ({ key: request.key,
+        payload: await fetchJson(request.url) })));
+      const rows = stationSeriesRows(settled.filter(item => item.status === "fulfilled").map(item => item.value));
+      renderBarChart($("#stationRainChart"), rows.map(row => ({ label: shortTime(row.date), value: row.rain_mm })),
+        { color: "#287dcc", minimumMaximum: 2 });
+      renderLineChart($("#stationTemperatureChart"), rows, [{ key: "temperature_c", label: "temperatura", color: "#d35428" }], { suffix: "°", dynamicRange: true });
+      renderLineChart($("#stationHumidityChart"), rows, [{ key: "humidity_pct", label: "umidità", color: "#287a54" }], { suffix: "%", minimum: 0, maximum: 100 });
+      renderLineChart($("#stationWindChart"), rows, [{ key: "wind_kmh", label: "vento", color: "#6f5a9c" }], { suffix: "", minimum: 0 });
+    } catch (error) {
+      ["#stationRainChart", "#stationTemperatureChart", "#stationHumidityChart", "#stationWindChart"]
+        .forEach(selector => renderEmptyChart($(selector), "Serie non disponibile: " + error.message));
+    }
+  }
+
+  function stationSeriesRows(results) {
+    const rows = new Map();
+    for (const result of results) {
+      for (const report of (result.payload && result.payload.data) || []) {
+        for (const product of report.prod || []) {
+          if (result.key === "wind_kmh" && product.var !== "B11002") continue;
+          for (const item of product.val || []) {
+            if (item.rel != null && Number(item.rel) !== 1) continue;
+            let value = Number(item.val);
+            if (!Number.isFinite(value)) continue;
+            if (result.key === "temperature_c") value -= 273.15;
+            if (result.key === "wind_kmh") value *= 3.6;
+            const row = rows.get(item.ref) || { date: item.ref };
+            row[result.key] = value;
+            rows.set(item.ref, row);
+          }
+        }
+      }
+    }
+    return [...rows.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   }
 
   function renderProfileUi() {
@@ -701,6 +932,7 @@
   }
 
   function selectLocation(lat, lon, showMarker) {
+    if ($("#stationAnalysis")) $("#stationAnalysis").classList.add("hidden");
     state.selected = { lat: Number(lat), lon: Number(lon) };
     $("#coordReadout").textContent = state.selected.lat.toFixed(5) + ", " + state.selected.lon.toFixed(5);
     if (showMarker) {
@@ -740,6 +972,7 @@
     $("#layerDescription").innerHTML = `<strong>${escapeHtml(description[0])}</strong>${escapeHtml(description[1])}`;
     if (state.activeOverlay === "forest") return renderCategoryLegend(container, title, FOREST_LEGEND);
     if (state.activeOverlay === "land_cover") return renderCategoryLegend(container, title, LAND_COVER_LEGEND);
+    if (state.activeOverlay === "aspect") return renderCategoryLegend(container, title, ASPECT_LEGEND);
     const settings = {
       probability: ["linear-gradient(90deg,#fff,#fff176,#ffb74d,#f4511e,#b71c1c)", ["0", "25", "50", "75", "100"]],
       elevation: ["linear-gradient(90deg,#2c7bb6,#abd9e9,#ffffbf,#fdae61,#8c510a)", ["bassa", "medio-bassa", "media", "alta", "molto alta"]],
@@ -790,6 +1023,7 @@
     const baseMetrics = [
       ["Indice " + (DAY_LABELS[state.activeDay] || ""), selectedScore == null ? "Scarica ICON-2I" : selectedScore + " / 100"],
       ["Quota", state.raster.elevation[cell.index] >= 0 ? state.raster.elevation[cell.index] + " m" : "—"],
+      ["Esposizione", aspectLabel(state.raster.aspect[cell.index])],
       ["Habitat", Math.round(habitat[cell.index] / 255 * 100) + " / 100"],
       ["Bosco", forestLabelForId(state.raster.forest[cell.index])],
       ["Suolo", soilLabel(state.raster.soil[cell.index])]
@@ -899,12 +1133,14 @@
   function metricHtml(label, value) { return `<div class="analysis-metric"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></div>`; }
   function forestLabelForId(id) { const key = state.manifest.data.forest_profile_keys[String(id)] || "forest_unclassified_score"; return FOREST_PROFILE_LABELS[key] || "Non classificato"; }
   function soilLabel(id) { return ["Ignoto", "Siliceo / acido", "Mesico", "Carbonatico", "Xerico"][Number(id)] || "Ignoto"; }
+  function aspectLabel(value) { if (!Number.isFinite(value) || value < 0) return "—"; return ["N", "NE", "E", "SE", "S", "SO", "O", "NO"][Math.round(value / 45) % 8] + ` (${Math.round(value)}°)`; }
   function finiteOrNull(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
   function total(rows, key) { const values = rows.map(row => row[key]).filter(Number.isFinite); return values.length ? values.reduce((sum, value) => sum + value, 0) : null; }
   function average(rows, key) { const values = rows.map(row => row[key]).filter(Number.isFinite); return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null; }
   function maximum(rows, key) { const values = rows.map(row => row[key]).filter(Number.isFinite); return values.length ? Math.max(...values) : null; }
   function formatNumber(value, decimals) { return value == null ? "—" : Number(value).toLocaleString("it-IT", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }); }
   function shortDate(value) { const parts = String(value || "").split("-"); return parts.length === 3 ? `${parts[2]}/${parts[1]}` : value; }
+  function shortTime(value) { const match = String(value || "").match(/T(\d{2}):(\d{2})/); return match ? `${match[1]}:${match[2]}` : shortDate(value); }
   function addIsoDays(value, days) { const date = new Date(value + "T12:00:00"); date.setDate(date.getDate() + days); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 
   function openPointModal(lat, lon) {

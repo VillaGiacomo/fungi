@@ -23,7 +23,8 @@
       "temperature_2m_max",
       "temperature_2m_min",
       "relative_humidity_2m_mean",
-      "wind_gusts_10m_max"
+      "wind_gusts_10m_max",
+      "wind_direction_10m_dominant"
     ].join(",");
     const query = new URLSearchParams({
       latitude: latitudes.join(","),
@@ -38,8 +39,15 @@
     return "https://api.open-meteo.com/v1/forecast?" + query.toString();
   }
 
-  function calculate(payloadValue, manifest, habitatPixels, elevationPixels, points, selectedProfile) {
-    const payloads = Array.isArray(payloadValue) ? payloadValue : [payloadValue];
+  function calculate(payloadValue, manifest, habitatPixels, elevationPixels, aspectPixels, points, selectedProfile, options) {
+    const calculationOptions = options || {};
+    let payloads = Array.isArray(payloadValue) ? payloadValue : [payloadValue];
+    let stationDiagnostics = { enabled: false, stations_used: 0, corrected_points: 0 };
+    if (calculationOptions.stationCorrection && Array.isArray(calculationOptions.stations)) {
+      const corrected = applyStationCorrections(payloads, calculationOptions.stations, manifest);
+      payloads = corrected.payloads;
+      stationDiagnostics = corrected.diagnostics;
+    }
     const expected = manifest.model.weather_points_per_axis ** 2;
     if (payloads.length !== expected) {
       throw new Error("Il provider ha restituito " + payloads.length + " punti invece di " + expected);
@@ -58,10 +66,12 @@
         target,
         habitatPixels,
         elevationPixels,
+        aspectPixels,
         points
       );
     }
-    return { days: output, target_dates: Object.fromEntries(DAY_KEYS.map((key, i) => [key, targets[i]])) };
+    return { days: output, target_dates: Object.fromEntries(DAY_KEYS.map((key, i) => [key, targets[i]])),
+      station_diagnostics: stationDiagnostics };
   }
 
   function pointFeatures(daily, targetDate, profile) {
@@ -81,23 +91,33 @@
     const rain20Score = preferredRange(rain20, profile.rain_20d_hard_min_mm, null,
       profile.rain_20d_preferred_min_mm, profile.rain_20d_preferred_max_mm);
     const thermal = thermalScore(max7, min7, profile);
-    const humidity = minimumScore(humidity7, profile.humidity_hard_min_pct, profile.humidity_preferred_min_pct);
+    const humidityScore = minimumScore(humidity7, profile.humidity_hard_min_pct, profile.humidity_preferred_min_pct);
     const wind = windScore(gust2);
     const flush = seasonalFlush(daily, targetDate, profile);
-    const base = averageFinite([rain7Score, rain20Score, thermal, humidity, wind]);
+    const base = averageFinite([rain7Score, rain20Score, thermal, humidityScore, wind]);
     const weather = clamp(base * Math.max(flush, profile.pre_trigger_multiplier), 0, 1);
-    return { weather, temperature: Number.isFinite(mean7) ? mean7 : (max7 + min7) / 2, flush };
+    const humidity = Number.isFinite(humidity7) ? humidity7 : 65;
+    const gust = Number.isFinite(gust2) ? gust2 : 0;
+    const windDirection = rolling(daily, "wind_direction_10m_dominant", targetDate, 2, "circular");
+    return { weather, temperature: Number.isFinite(mean7) ? mean7 : (max7 + min7) / 2,
+      humidity, gust, windDirection, flush };
   }
 
-  function renderDay(manifest, profile, sampleFeatures, targetDate, habitatPixels, elevationPixels, points) {
+  function renderDay(manifest, profile, sampleFeatures, targetDate, habitatPixels, elevationPixels, aspectPixels, points) {
     const width = manifest.model.width;
     const height = manifest.model.height;
     const n = manifest.model.weather_points_per_axis;
     const total = width * height;
-    if (habitatPixels.length !== total || elevationPixels.length !== total) {
+    if (habitatPixels.length !== total || elevationPixels.length !== total || aspectPixels.length !== total) {
       throw new Error("Dimensione raster mobile non valida");
     }
     const probability = new Uint8Array(total);
+    const weatherLayer = new Uint8Array(total);
+    const elevationLayer = new Uint8Array(total);
+    const aspectLayer = new Uint8Array(total);
+    const windLayer = new Uint8Array(total);
+    const habitatLayer = new Uint8Array(total);
+    const dynamicLayer = new Uint8Array(total);
     const userBonus = userBonusGrid(points, targetDate, manifest);
 
     for (let y = 0; y < height; y += 1) {
@@ -112,13 +132,55 @@
         const gx = x / Math.max(width - 1, 1) * (n - 1);
         const weather = bilinear(sampleFeatures, "weather", gx, gy, n);
         const temperature = bilinear(sampleFeatures, "temperature", gx, gy, n);
+        const humidity = bilinear(sampleFeatures, "humidity", gx, gy, n);
+        const gust = bilinear(sampleFeatures, "gust", gx, gy, n);
+        const windDirection = bilinearAngle(sampleFeatures, "windDirection", gx, gy, n);
         const elevationScore = dynamicElevationScore(elevationPixels[index], temperature, profile);
-        const habitatEffect = Math.pow(clamp(habitat * elevationScore, 0, 1), profile.habitat_power);
-        const score = clamp(weather + userBonus[index], 0, 1) * habitatEffect;
+        const aspectMultiplier = dynamicAspectMultiplier(aspectPixels[index], temperature, humidity);
+        const windPenalty = windExposurePenalty(aspectPixels[index], windDirection, gust, weather);
+        const dynamicHabitat = clamp(habitat * elevationScore * aspectMultiplier * (1 - windPenalty), 0, 1);
+        const dynamicScore = clamp(weather + userBonus[index], 0, 1);
+        const habitatEffect = Math.pow(dynamicHabitat, profile.habitat_power);
+        const score = dynamicScore * habitatEffect;
         probability[index] = Math.round(score * 100);
+        weatherLayer[index] = Math.round(clamp(weather, 0, 1) * 100);
+        elevationLayer[index] = Math.round(clamp(elevationScore, 0, 1) * 100);
+        aspectLayer[index] = Math.round(clamp(aspectMultiplier / 1.08, 0, 1) * 100);
+        windLayer[index] = Math.round(clamp(windPenalty / 0.35, 0, 1) * 100);
+        habitatLayer[index] = Math.round(dynamicHabitat * 100);
+        dynamicLayer[index] = Math.round(dynamicScore * 100);
       }
     }
-    return { probability, rgba: colorize(probability, width, height) };
+    return { probability, rgba: colorize(probability, width, height), layers: {
+      weather: weatherLayer,
+      dynamic_elevation: elevationLayer,
+      dynamic_aspect: aspectLayer,
+      wind: windLayer,
+      dynamic_habitat: habitatLayer,
+      dynamic_score: dynamicLayer
+    } };
+  }
+
+  function dynamicAspectMultiplier(aspect, temperature, humidity) {
+    if (!Number.isFinite(aspect) || aspect < 0) return 1;
+    const southness = (Math.cos((aspect - 180) * Math.PI / 180) + 1) / 2;
+    const northness = 1 - southness;
+    const hotDry = Math.max(clamp((temperature - 17) / 7, 0, 1), clamp((68 - humidity) / 23, 0, 1));
+    const coolWet = Math.max(clamp((12 - temperature) / 6, 0, 1), clamp((humidity - 82) / 18, 0, 1));
+    return clamp(1 - 0.10 * hotDry * southness + 0.075 * coolWet * southness
+      - 0.035 * coolWet * northness, 0.88, 1.08);
+  }
+
+  function windExposurePenalty(aspect, windDirection, gust, weatherScore) {
+    if (!Number.isFinite(gust) || gust <= 35) return 0;
+    const intensity = clamp((gust - 35) / 25, 0, 1);
+    let exposure = 0.55;
+    if (Number.isFinite(aspect) && aspect >= 0 && Number.isFinite(windDirection)) {
+      const delta = Math.abs((((aspect - windDirection) + 540) % 360) - 180);
+      exposure = 0.35 + 0.65 * Math.max(0, Math.cos(delta * Math.PI / 180));
+    }
+    const wetProtection = clamp((weatherScore - 0.72) / 0.28, 0, 1) * 0.45;
+    return clamp(intensity * (0.12 + 0.23 * exposure) * (1 - wetProtection), 0, 0.35);
   }
 
   function seasonalFlush(daily, targetDate, profile) {
@@ -253,6 +315,122 @@
     return bonus;
   }
 
+  function buildStationObservationRequests(manifest) {
+    const end = new Date();
+    const start = new Date(end.getTime() - 4 * 3600000);
+    const dayStart = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0));
+    const bbox = manifest.area.bbox;
+    const boundingBox = `latmin:${bbox.min_lat},lonmin:${bbox.min_lon},latmax:${bbox.max_lat},lonmax:${bbox.max_lon}`;
+    const specs = [
+      ["temperature_c", "B12101", "254,0,0", "103,2000,0,0", start, false],
+      ["humidity_pct", "B13003", "254,0,0", "103,2000,0,0", start, false],
+      ["wind_kmh", "B11002 or B11001", "254,0,0", "103,10000,0,0", start, false],
+      ["rain_mm", "B13011", null, "1,0,0,0", dayStart, true]
+    ];
+    return specs.map(spec => {
+      const [key, product, timerange, level, from, daily] = spec;
+      let q = `${reftimeQuery(from, end)};product:${product};license:CCBY_COMPLIANT`;
+      if (timerange) q += `;timerange:${timerange}`;
+      if (level) q += `;level:${level}`;
+      const query = new URLSearchParams({ q, bounding_box: boundingBox, reliabilityCheck: "true", last: "true" });
+      if (daily) query.set("daily", "true");
+      return { key, url: "https://meteohub.agenziaitaliameteo.it/api/observations?" + query.toString() };
+    });
+  }
+
+  function buildStationSeriesRequests(station) {
+    const end = new Date();
+    const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0));
+    const specs = [
+      ["temperature_c", "B12101", "254,0,0", "103,2000,0,0"],
+      ["humidity_pct", "B13003", "254,0,0", "103,2000,0,0"],
+      ["wind_kmh", "B11002 or B11001", "254,0,0", "103,10000,0,0"],
+      ["rain_mm", "B13011", "1,0,3600", "1,0,0,0"]
+    ];
+    return specs.map(([key, product, timerange, level]) => {
+      const q = `${reftimeQuery(start, end)};timerange:${timerange};level:${level};license:CCBY_COMPLIANT;product:${product}`;
+      const query = new URLSearchParams({ q, lat: String(station.lat), lon: String(station.lon),
+        networks: station.network, stationDetails: "true" });
+      return { key, url: "https://meteohub.agenziaitaliameteo.it/api/observations?" + query.toString() };
+    });
+  }
+
+  function reftimeQuery(start, end) {
+    const stamp = value => value.getUTCFullYear() + "-" + String(value.getUTCMonth() + 1).padStart(2, "0")
+      + "-" + String(value.getUTCDate()).padStart(2, "0") + " " + String(value.getUTCHours()).padStart(2, "0")
+      + ":" + String(value.getUTCMinutes()).padStart(2, "0");
+    return `reftime: >=${stamp(start)},<=${stamp(end)}`;
+  }
+
+  function applyStationCorrections(payloads, stations, manifest) {
+    const cloned = JSON.parse(JSON.stringify(payloads));
+    const freshStations = (stations || []).filter(station => station && station.latest
+      && Number.isFinite(Number(station.lat)) && Number.isFinite(Number(station.lon)));
+    let correctedPoints = 0;
+    const used = new Set();
+    for (const payload of cloned) {
+      if (!payload.daily || !Array.isArray(payload.daily.time)) continue;
+      const lat = Number(payload.latitude);
+      const lon = Number(payload.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const nearby = freshStations.map(station => ({ station,
+        distance: haversineKm(lat, lon, Number(station.lat), Number(station.lon)) }))
+        .filter(item => item.distance <= 32).sort((a, b) => a.distance - b.distance).slice(0, 8);
+      if (!nearby.length) continue;
+      const todayIndex = payload.daily.time.indexOf(localTodayIso());
+      if (todayIndex < 0) continue;
+      let changed = false;
+      const applyBias = (stationKey, modelKey, cap, strength, decays) => {
+        const observed = weightedObservation(nearby, stationKey, used);
+        const modelToday = Number(payload.daily[modelKey] && payload.daily[modelKey][todayIndex]);
+        if (!Number.isFinite(observed) || !Number.isFinite(modelToday)) return;
+        const bias = clamp((observed - modelToday) * strength, -cap, cap);
+        decays.forEach((decay, offset) => {
+          const index = todayIndex + offset;
+          if (!payload.daily[modelKey] || index >= payload.daily[modelKey].length) return;
+          const raw = Number(payload.daily[modelKey][index]);
+          if (Number.isFinite(raw)) payload.daily[modelKey][index] = raw + bias * decay;
+        });
+        changed = true;
+      };
+      applyBias("temperature_c", "temperature_2m_mean", 2.5, 0.65, [1, 0.55, 0.25]);
+      applyBias("temperature_c", "temperature_2m_min", 2.5, 0.65, [1, 0.55, 0.25]);
+      applyBias("temperature_c", "temperature_2m_max", 2.5, 0.65, [1, 0.55, 0.25]);
+      applyBias("humidity_pct", "relative_humidity_2m_mean", 14, 0.75, [1, 0.5, 0.2]);
+      const rainObserved = weightedObservation(nearby, "rain_mm", used);
+      const rainModel = Number(payload.daily.precipitation_sum && payload.daily.precipitation_sum[todayIndex]);
+      if (Number.isFinite(rainObserved) && Number.isFinite(rainModel)) {
+        payload.daily.precipitation_sum[todayIndex] = Math.max(0, rainModel + clamp(rainObserved - rainModel, -15, 20));
+        changed = true;
+      }
+      if (changed) correctedPoints += 1;
+    }
+    return { payloads: cloned, diagnostics: { enabled: true, stations_used: used.size,
+      corrected_points: correctedPoints, radius_km: 32 } };
+  }
+
+  function weightedObservation(nearby, key, used) {
+    let total = 0;
+    let weights = 0;
+    for (const item of nearby) {
+      const value = Number(item.station.latest[key]);
+      if (!Number.isFinite(value)) continue;
+      const weight = Math.pow(Math.max(0.05, 1 - item.distance / 32), 2);
+      total += value * weight;
+      weights += weight;
+      used.add(item.station.id || `${item.station.lat},${item.station.lon}`);
+    }
+    return weights ? total / weights : NaN;
+  }
+
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    const rad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * rad;
+    const dLon = (lon2 - lon1) * rad;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+    return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
   function colorize(probability, width, height) {
     const rgba = new Uint8ClampedArray(width * height * 4);
     const stops = [
@@ -300,6 +478,11 @@
     if (!selected.length) return NaN;
     if (operation === "sum") return selected.reduce((a, b) => a + b, 0);
     if (operation === "max") return Math.max(...selected);
+    if (operation === "circular") {
+      const x = selected.reduce((sum, value) => sum + Math.cos(value * Math.PI / 180), 0);
+      const y = selected.reduce((sum, value) => sum + Math.sin(value * Math.PI / 180), 0);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
     return selected.reduce((a, b) => a + b, 0) / selected.length;
   }
 
@@ -348,6 +531,17 @@
     const a = (Number.isFinite(q00) ? q00 : fallback) * (1 - tx) + (Number.isFinite(q10) ? q10 : fallback) * tx;
     const b = (Number.isFinite(q01) ? q01 : fallback) * (1 - tx) + (Number.isFinite(q11) ? q11 : fallback) * tx;
     return a * (1 - ty) + b * ty;
+  }
+
+  function bilinearAngle(samples, key, gx, gy, n) {
+    const projected = samples.map(sample => {
+      const value = Number(sample[key]);
+      return { x: Number.isFinite(value) ? Math.cos(value * Math.PI / 180) : NaN,
+        y: Number.isFinite(value) ? Math.sin(value * Math.PI / 180) : NaN };
+    });
+    const x = bilinear(projected, "x", gx, gy, n);
+    const y = bilinear(projected, "y", gx, gy, n);
+    return x || y ? (Math.atan2(y, x) * 180 / Math.PI + 360) % 360 : NaN;
   }
 
   function triangular(days, start, peak, end) {
@@ -412,7 +606,10 @@
   window.FungiModel = {
     DAY_KEYS,
     buildWeatherRequest,
+    buildStationObservationRequests,
+    buildStationSeriesRequests,
     calculate,
+    colorize,
     bytesToBase64,
     base64ToBytes,
     localTodayIso

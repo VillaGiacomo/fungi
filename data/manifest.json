@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-07-14T09:39:50.764028+00:00",
+  "generated_at_utc": "2026-07-15T09:57:08.274855+00:00",
   "source_run_finished_at_utc": "2026-07-11T23:30:30.331085+00:00",
   "area": {
     "name": "Ossola Ticino Prealpi e Alpi lombarde - Poschiavo",
@@ -557,6 +557,12 @@
   ],
   "layers": [
     {
+      "key": "aspect",
+      "label": "Esposizione versanti",
+      "path": "data/maps/layer_aspect.png",
+      "mode": "base"
+    },
+    {
       "key": "bundled_today",
       "label": "Probabilita salvata - oggi",
       "path": "data/maps/porcini_probability_today.png",
@@ -606,31 +612,31 @@
     },
     {
       "key": "dynamic_habitat",
-      "label": "Habitat dinamico salvato",
+      "label": "Habitat dinamico",
       "path": "data/maps/layer_porcini_today_dynamic_habitat.png",
       "mode": "base"
     },
     {
       "key": "weather",
-      "label": "Meteo spazializzato salvato",
+      "label": "Meteo spazializzato",
       "path": "data/maps/layer_porcini_today_weather_score.png",
       "mode": "base"
     },
     {
       "key": "dynamic_elevation",
-      "label": "Quota dinamica salvata",
+      "label": "Quota dinamica",
       "path": "data/maps/layer_porcini_today_dynamic_elevation.png",
       "mode": "base"
     },
     {
       "key": "wind",
-      "label": "Penalita vento salvata",
+      "label": "Penalita vento",
       "path": "data/maps/layer_porcini_today_wind_penalty.png",
       "mode": "base"
     },
     {
       "key": "dynamic_score",
-      "label": "Indice dinamico salvato",
+      "label": "Indice dinamico",
       "path": "data/maps/layer_porcini_today_dynamic_score.png",
       "mode": "base"
     }
@@ -646,6 +652,7 @@
       "mio": "data/habitats/habitat_mio.png"
     },
     "elevation": "data/elevation_encoded.png",
+    "aspect": "data/aspect_encoded.png",
     "forest_type": "data/forest_type_encoded.png",
     "soil_class": "data/soil_class_encoded.png",
     "allowed_land": "data/allowed_land.png",

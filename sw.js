@@ -1,4 +1,4 @@
-const APP_CACHE = "fungi-ai-app-v6";
+const APP_CACHE = "fungi-ai-app-v7";
 const RUNTIME_CACHE = "fungi-ai-runtime-v2";
 const MAX_RUNTIME_ENTRIES = 350;
 const APP_FILES = [
@@ -6,6 +6,7 @@ const APP_FILES = [
   "./manifest.webmanifest", "./vendor/leaflet/leaflet.css", "./vendor/leaflet/leaflet.js",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png", "./icons/apple-touch-icon.png",
   "./data/manifest.js", "./data/manifest.json", "./data/allowed_land.png", "./data/elevation_encoded.png",
+  "./data/aspect_encoded.png", "./data/maps/layer_aspect.png",
   "./data/forest_type_encoded.png", "./data/soil_class_encoded.png", "./data/habitat_ai.png",
   "./data/habitats/habitat_ai_mode.png", "./data/habitats/habitat_aperto.png",
   "./data/habitats/habitat_base.png", "./data/habitats/habitat_conservativo.png",
