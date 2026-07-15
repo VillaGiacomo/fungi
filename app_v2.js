@@ -119,7 +119,7 @@
   };
   const LAYER_DESCRIPTIONS = {
     probability: ["Probabilità porcini", "Risultato finale 0–100 del profilo attivo: combina habitat, meteo ICON-2I, fase stagionale, quota e fungaie salvate."],
-    forest: ["Tipo forestale", "Classificazione del bosco usata per valutare l’habitat dei porcini. Le zone sconosciute sono trasparenti, così resta visibile lo sfondo."],
+    forest: ["Tipo forestale", "Classificazione del bosco usata per valutare l’habitat dei porcini. Le zone sconosciute o non classificate sono trasparenti, così resta visibile lo sfondo."],
     land_cover: ["Uso del suolo", "Distingue boschi, aree agricole, rocce, acqua e zone urbanizzate. Serve a escludere o ridurre le superfici inadatte."],
     elevation: ["Quota", "Altitudine del terreno. I colori rappresentano quote relative da basse ad alte nell’area coperta."],
     slope: ["Pendenza", "Inclinazione del terreno: da aree pianeggianti a versanti ripidi."],
@@ -750,7 +750,7 @@
 
   function renderCategoryLegend(container, title, entries) {
     container.innerHTML = `<strong class="legend-title">${escapeHtml(title)}</strong><div class="legend-categories">${entries.map(([color, label]) =>
-      `<span class="legend-item"><i class="${label === "Sconosciuto" ? "transparent-swatch" : ""}" style="--color:${color}"></i><span>${escapeHtml(label)}</span></span>`).join("")}</div>`;
+      `<span class="legend-item"><i class="${["Sconosciuto", "Bosco non classificato"].includes(label) ? "transparent-swatch" : ""}" style="--color:${color}"></i><span>${escapeHtml(label)}</span></span>`).join("")}</div>`;
   }
 
   function cellForLocation(location) {

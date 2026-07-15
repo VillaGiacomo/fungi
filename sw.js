@@ -1,4 +1,4 @@
-const APP_CACHE = "fungi-ai-app-v5";
+const APP_CACHE = "fungi-ai-app-v6";
 const RUNTIME_CACHE = "fungi-ai-runtime-v2";
 const MAX_RUNTIME_ENTRIES = 350;
 const APP_FILES = [
