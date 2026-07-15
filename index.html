@@ -37,6 +37,15 @@
         <div><strong>Stazioni MeteoHub</strong><small id="stationStatus">Stazioni non ancora scaricate</small></div>
         <label class="switch-row"><input id="showStations" type="checkbox" checked><span>Mostra</span></label>
         <label class="switch-row"><input id="stationCorrection" type="checkbox"><span>Correggi calcolo</span></label>
+        <div class="station-map-legend" aria-label="Legenda temperatura e attività stazioni">
+          <span><i style="--station-color:#355f9e"></i>&lt;5°</span>
+          <span><i style="--station-color:#49a0b5"></i>5–12°</span>
+          <span><i style="--station-color:#62a65d"></i>12–18°</span>
+          <span><i style="--station-color:#d4aa43"></i>18–24°</span>
+          <span><i style="--station-color:#c95b3e"></i>≥24°</span>
+          <span><b>×</b> ferma ≥24h</span>
+          <small>Nascosta dopo 15 giorni</small>
+        </div>
       </div>
 
       <div class="map-controls map-controls-main">

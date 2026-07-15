@@ -50,6 +50,11 @@ main { max-width: 760px; margin: 0 auto; }
 .station-control-card small { color: var(--muted); font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .switch-row { display: flex; align-items: center; gap: 4px; padding: 6px 7px; background: #edf1eb; border-radius: 10px; font-size: 9px; white-space: nowrap; }
 .switch-row input { width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--clay); }
+.station-map-legend { grid-column: 1 / -1; display: flex !important; flex-wrap: wrap; align-items: center; gap: 5px 9px !important; padding-top: 7px; border-top: 1px solid var(--line); }
+.station-map-legend span { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 8px; white-space: nowrap; }
+.station-map-legend i { width: 9px; height: 9px; border-radius: 50%; background: var(--station-color); border: 1px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.16); }
+.station-map-legend b { color: #8f3d32; font-size: 15px; line-height: 8px; }
+.station-map-legend small { margin-left: auto; color: var(--muted); font-size: 8px; }
 .eyebrow { color: var(--clay); text-transform: uppercase; letter-spacing: .9px; font-size: 9px; font-weight: 800; }
 
 button.primary, button.secondary { border: 0; border-radius: 13px; min-height: 45px; padding: 0 16px; font-weight: 750; transition: transform .12s, background .12s; }
@@ -79,6 +84,7 @@ textarea { resize: vertical; }
 .point-pin { width: 16px; height: 16px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #713a25; border: 2px solid #fff; box-shadow: 0 2px 5px rgba(0,0,0,.45); }
 .point-pin.finding { background: #2f7246; }
 .point-pin.both { background: #a65a34; }
+.station-stale-icon { display: grid !important; place-items: center; width: 18px !important; height: 18px !important; border-radius: 50%; background: rgba(255,253,248,.94); color: #9d3b31; border: 1px solid #9d3b31; box-shadow: 0 2px 5px rgba(0,0,0,.26); font-size: 16px; font-weight: 900; line-height: 1; }
 .hidden { display: none !important; }
 .map-hint { position: absolute; z-index: 700; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(20,39,31,.83); color: #fff; border-radius: 999px; padding: 6px 10px; font-size: 9px; pointer-events: none; white-space: nowrap; }
 .map-tool { position: absolute; z-index: 700; right: 11px; width: 42px; height: 42px; border: 0; border-radius: 13px; background: rgba(255,253,248,.94); color: var(--forest-900); box-shadow: 0 3px 12px rgba(0,0,0,.18); font-size: 22px; }

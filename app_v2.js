@@ -477,7 +477,8 @@
         const habitat = habitatForActiveProfile();
         const result = window.FungiModel.calculate(
           state.weather, state.manifest, habitat, state.raster.elevation, state.raster.aspect,
-          state.points, profile, { stationCorrection: state.stationCorrection, stations: state.stations }
+          state.points, profile, { stationCorrection: state.stationCorrection,
+            stations: state.stations.filter(station => stationAgeDays(station) < 1) }
         );
         const mapStore = {};
         const dynamicMapStore = {};
@@ -632,16 +633,19 @@
       payload: await fetchJson(request.url) })));
     const results = settled.filter(item => item.status === "fulfilled").map(item => item.value);
     if (!results.length) throw new Error("Stazioni MeteoHub non raggiungibili");
-    state.stations = mergeStationObservations(results, state.manifest);
+    state.stations = mergeStationObservations(results, state.manifest, state.stations);
     localStorage.setItem(STORAGE.stations, JSON.stringify(state.stations));
     renderStationMarkers();
     updateStationControls();
     return state.stations;
   }
 
-  function mergeStationObservations(results, manifest) {
+  function mergeStationObservations(results, manifest, cachedStations) {
     const bbox = manifest.area.bbox;
     const stations = new Map();
+    for (const cached of cachedStations || []) {
+      if (cached && stationAgeDays(cached) < 15) stations.set(cached.id, cached);
+    }
     for (const result of results) {
       for (const report of (result.payload && result.payload.data) || []) {
         const stat = report.stat || {};
@@ -668,17 +672,20 @@
         if (result.key === "wind_kmh") value *= 3.6;
         station.latest[result.key] = value;
         station.latest[result.key + "_at"] = selected.ref;
+        station.latest.observed_at = stationLastReport(station);
         stations.set(id, station);
       }
     }
-    return [...stations.values()].sort((a, b) => a.name.localeCompare(b.name, "it"));
+    return [...stations.values()].filter(station => stationAgeDays(station) < 15)
+      .sort((a, b) => a.name.localeCompare(b.name, "it"));
   }
 
   function updateStationControls() {
     if (!$("#stationStatus")) return;
-    const count = state.stations.length;
-    $("#stationStatus").textContent = count
-      ? `${count} stazioni nell’area · correzione ${state.stationCorrection ? "attiva" : "disattivata"}`
+    const activeCount = state.stations.filter(station => stationAgeDays(station) < 1).length;
+    const staleCount = state.stations.filter(station => stationAgeDays(station) >= 1 && stationAgeDays(station) < 15).length;
+    $("#stationStatus").textContent = state.stations.length
+      ? `${activeCount} attive${staleCount ? ` · ${staleCount} ferme` : ""} · correzione ${state.stationCorrection ? "attiva" : "disattivata"}`
       : "Stazioni non ancora scaricate";
   }
 
@@ -687,11 +694,21 @@
     state.stationsLayer.clearLayers();
     if (!state.showStations) return;
     for (const station of state.stations) {
+      const ageDays = stationAgeDays(station);
+      if (ageDays >= 15) continue;
       const temperature = Number(station.latest.temperature_c);
-      const marker = L.circleMarker([station.lat, station.lon], { radius: 4.5, weight: 1.5, color: "#fff",
-        fillColor: Number.isFinite(temperature) ? stationTemperatureColor(temperature) : "#4f7183",
-        fillOpacity: 0.95, pane: "markerPane" }).addTo(state.stationsLayer);
-      marker.bindTooltip(`${escapeHtml(station.name)}${Number.isFinite(temperature) ? ` · ${formatNumber(temperature, 1)} °C` : ""}`);
+      const stale = ageDays >= 1;
+      const marker = stale
+        ? L.marker([station.lat, station.lon], { bubblingMouseEvents: false,
+          icon: L.divIcon({ className: "station-stale-icon", html: "×", iconSize: [18, 18], iconAnchor: [9, 9] }) })
+          .addTo(state.stationsLayer)
+        : L.circleMarker([station.lat, station.lon], { radius: 4.5, weight: 1.5, color: "#fff",
+          fillColor: Number.isFinite(temperature) ? stationTemperatureColor(temperature) : "#4f7183",
+          fillOpacity: 0.95, pane: "markerPane", bubblingMouseEvents: false }).addTo(state.stationsLayer);
+      const status = stale ? `ferma da ${Math.max(1, Math.floor(ageDays))} g`
+        : (Number.isFinite(temperature) ? `${formatNumber(temperature, 1)} °C` : "dato recente");
+      marker.bindTooltip(`${escapeHtml(station.name)} · ${escapeHtml(status)}`);
+      marker.bindPopup(`<strong>${escapeHtml(station.name)}</strong><br><span>${escapeHtml(status)}</span><br><small>${escapeHtml(station.network)}</small>`);
       marker.on("click", event => {
         if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
         openStationAnalysis(station);
@@ -707,12 +724,29 @@
     return "#c95b3e";
   }
 
+  function stationLastReport(station) {
+    const times = Object.entries((station && station.latest) || {})
+      .filter(([key, value]) => key.endsWith("_at") && value)
+      .map(([, value]) => String(value));
+    return times.sort().pop() || (station && station.latest && station.latest.observed_at) || null;
+  }
+
+  function stationAgeDays(station) {
+    const raw = stationLastReport(station);
+    if (!raw) return Infinity;
+    const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(raw) ? raw : raw + "Z";
+    const timestamp = Date.parse(normalized);
+    return Number.isFinite(timestamp) ? Math.max(0, (Date.now() - timestamp) / 86400000) : Infinity;
+  }
+
   async function openStationAnalysis(station) {
     $("#pointAnalysis").classList.add("hidden");
     const panel = $("#stationAnalysis");
     panel.classList.remove("hidden");
     $("#stationName").textContent = station.name;
-    $("#stationMeta").textContent = `${station.network} · ${station.lat.toFixed(5)}, ${station.lon.toFixed(5)}`;
+    const ageDays = stationAgeDays(station);
+    const activity = ageDays >= 1 ? `FERMA DA ${Math.max(1, Math.floor(ageDays))} G` : "ATTIVA";
+    $("#stationMeta").textContent = `${activity} · ${station.network} · ${station.lat.toFixed(5)}, ${station.lon.toFixed(5)}`;
     $("#stationMetrics").innerHTML = [
       ["Temperatura", Number.isFinite(Number(station.latest.temperature_c)) ? formatNumber(station.latest.temperature_c, 1) + " °C" : "—"],
       ["Umidità", Number.isFinite(Number(station.latest.humidity_pct)) ? formatNumber(station.latest.humidity_pct, 0) + "%" : "—"],
