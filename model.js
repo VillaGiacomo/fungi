@@ -32,6 +32,7 @@
       timezone: "Europe/Rome",
       past_days: "92",
       forecast_days: "3",
+      models: "italia_meteo_arpae_icon_2i",
       cell_selection: "land"
     });
     return "https://api.open-meteo.com/v1/forecast?" + query.toString();

@@ -67,7 +67,7 @@
           <small id="modelUpdated">Nessun download necessario per consultarle</small>
         </div>
         <button id="updateWeather" class="primary compact">
-          <span class="button-icon">↻</span> Aggiorna dati
+          <span class="button-icon">⇩</span> Scarica ICON-2I
         </button>
       </div>
 
@@ -116,6 +116,7 @@
       </div>
 
       <div id="layerLegend" class="layer-legend" aria-label="Legenda del layer"></div>
+      <div id="layerDescription" class="layer-description" aria-live="polite"></div>
 
       <section id="pointAnalysis" class="point-analysis hidden" aria-live="polite">
         <div class="analysis-heading">
@@ -140,7 +141,7 @@
           <div class="chart-title"><div><strong>Umidità media</strong><small>Ultimi 14 giorni</small></div><span id="humidityLatest"></span></div>
           <div id="humidityChart" class="chart-host"></div>
         </article>
-        <p class="helper">Meteo interpolato dal punto Open-Meteo più vicino della griglia locale. Come sul PC, l’indice è sperimentale e relativo.</p>
+        <p class="helper">Meteo ICON-2I fornito da Open-Meteo e interpolato dal punto più vicino della griglia locale. Come sul PC, l’indice è sperimentale e relativo.</p>
       </section>
       <p class="disclaimer">Indice relativo sperimentale, non garanzia di ritrovamento. Verifica sempre accessi, divieti e sicurezza sul posto.</p>
     </section>
@@ -189,13 +190,13 @@
       <div id="aiRules" class="rules-list"></div>
       <details class="model-note">
         <summary>Come viene calcolato sul telefono</summary>
-        <p>Il telefono scarica solo serie meteo numeriche da Open-Meteo. Pioggia, temperatura, umidità e vento vengono trasformati in indici 0–1 e interpolati sulla griglia locale. Il risultato viene moltiplicato per habitat forestale, proxy del suolo e quota dinamica; le fungaie personali aggiungono un bonus locale limitato.</p>
+        <p>Il telefono scarica il modello ItaliaMeteo ICON-2I tramite Open-Meteo. Pioggia, temperatura, umidità e vento vengono trasformati in indici 0–1 e interpolati sulla griglia locale. Il risultato viene moltiplicato per habitat forestale, proxy del suolo e quota dinamica; le fungaie personali aggiungono un bonus locale limitato.</p>
       </details>
       <details class="model-note">
         <summary>Cosa funziona senza rete</summary>
         <p>App, mappe incluse, AI-mode, GPS, archivio delle fungaie, lettura dei layer ed esportazione GeoJSON. La rete serve soltanto per ottenere un nuovo pacchetto meteo; l’ultimo calcolo resta memorizzato.</p>
       </details>
-      <p class="source-note">Meteo: Open-Meteo. Cartografia politica: OpenStreetMap. Satellite: EOxCloudless / Copernicus Sentinel-2. Layer fungini: dati locali del progetto.</p>
+      <p class="source-note">Meteo: ItaliaMeteo ICON-2I via Open-Meteo. Cartografia politica: OpenStreetMap. Satellite: EOxCloudless / Copernicus Sentinel-2. Layer fungini: dati locali del progetto.</p>
     </section>
   </main>
 

@@ -117,6 +117,19 @@
     forest_mugo_score: "Mugo", forest_riparian_score: "Ripariale", forest_black_locust_score: "Robinia",
     forest_maple_score: "Acero", forest_ash_score: "Frassino", forest_maple_ash_score: "Acero-frassino"
   };
+  const LAYER_DESCRIPTIONS = {
+    probability: ["Probabilità porcini", "Risultato finale 0–100 del profilo attivo: combina habitat, meteo ICON-2I, fase stagionale, quota e fungaie salvate."],
+    forest: ["Tipo forestale", "Classificazione del bosco usata per valutare l’habitat dei porcini. Le zone sconosciute sono trasparenti, così resta visibile lo sfondo."],
+    land_cover: ["Uso del suolo", "Distingue boschi, aree agricole, rocce, acqua e zone urbanizzate. Serve a escludere o ridurre le superfici inadatte."],
+    elevation: ["Quota", "Altitudine del terreno. I colori rappresentano quote relative da basse ad alte nell’area coperta."],
+    slope: ["Pendenza", "Inclinazione del terreno: da aree pianeggianti a versanti ripidi."],
+    static_habitat: ["Habitat statico", "Idoneità stabile 0–100 costruita con bosco, suolo, quota e copertura del territorio, senza usare il meteo del giorno."],
+    dynamic_habitat: ["Habitat dinamico", "Habitat statico corretto dalle condizioni del giorno, soprattutto fascia altitudinale termica ed esposizione al vento."],
+    weather: ["Meteo spazializzato", "Indice meteo 0–100 ottenuto da pioggia 7/20 giorni, temperature, umidità, vento e fase della buttata, interpolato sull’area."],
+    dynamic_elevation: ["Quota dinamica", "Quanto la quota di ogni cella è favorevole oggi: la fascia ottimale sale o scende in base alla temperatura."],
+    wind: ["Penalità vento", "Riduzione 0–100 dovuta a raffiche ed esposizione: valori alti indicano maggiore effetto disseccante."],
+    dynamic_score: ["Indice dinamico", "Componente giornaliera prima del risultato finale: riassume meteo e correzioni dinamiche dell’habitat."]
+  };
 
   const state = {
     manifest: null,
@@ -373,9 +386,9 @@
     const url = window.FungiModel.buildWeatherRequest(state.manifest);
     const button = $("#updateWeather");
     button.disabled = true;
-    button.innerHTML = '<span class="button-icon">···</span> Scarico';
-    $("#modelStatus").textContent = "Download meteo in corso";
-    $("#modelUpdated").textContent = "25 punti · storico 92 giorni · forecast 3 giorni";
+    button.innerHTML = '<span class="button-icon">···</span> Scarico ICON';
+    $("#modelStatus").textContent = "Download ICON-2I in corso";
+    $("#modelUpdated").textContent = "25 punti · fino a 92 giorni passati · previsione 3 giorni";
     if (window.AndroidApp && typeof window.AndroidApp.fetchWeather === "function") {
       window.AndroidApp.fetchWeather(state.requestId, url);
     } else {
@@ -723,6 +736,8 @@
     if (!container || !state.manifest) return;
     const layer = state.manifest.layers.find(item => item.key === state.activeOverlay);
     const title = state.activeOverlay === "probability" ? "Probabilità porcini" : (layer ? layer.label : "Indice");
+    const description = LAYER_DESCRIPTIONS[state.activeOverlay] || [title, "Layer sperimentale del modello porcini."];
+    $("#layerDescription").innerHTML = `<strong>${escapeHtml(description[0])}</strong>${escapeHtml(description[1])}`;
     if (state.activeOverlay === "forest") return renderCategoryLegend(container, title, FOREST_LEGEND);
     if (state.activeOverlay === "land_cover") return renderCategoryLegend(container, title, LAND_COVER_LEGEND);
     const settings = {
@@ -735,7 +750,7 @@
 
   function renderCategoryLegend(container, title, entries) {
     container.innerHTML = `<strong class="legend-title">${escapeHtml(title)}</strong><div class="legend-categories">${entries.map(([color, label]) =>
-      `<span class="legend-item"><i style="background:${color}"></i>${escapeHtml(label)}</span>`).join("")}</div>`;
+      `<span class="legend-item"><i class="${label === "Sconosciuto" ? "transparent-swatch" : ""}" style="--color:${color}"></i><span>${escapeHtml(label)}</span></span>`).join("")}</div>`;
   }
 
   function cellForLocation(location) {
@@ -773,7 +788,7 @@
     const habitat = habitatForActiveProfile();
     const selectedScore = scoreAtLocation(state.activeDay, state.selected);
     const baseMetrics = [
-      ["Indice " + (DAY_LABELS[state.activeDay] || ""), selectedScore == null ? "Aggiorna dati" : selectedScore + " / 100"],
+      ["Indice " + (DAY_LABELS[state.activeDay] || ""), selectedScore == null ? "Scarica ICON-2I" : selectedScore + " / 100"],
       ["Quota", state.raster.elevation[cell.index] >= 0 ? state.raster.elevation[cell.index] + " m" : "—"],
       ["Habitat", Math.round(habitat[cell.index] / 255 * 100) + " / 100"],
       ["Bosco", forestLabelForId(state.raster.forest[cell.index])],
@@ -782,7 +797,7 @@
     const daily = nearestWeatherDaily(state.selected);
     if (!daily) {
       $("#analysisMetrics").innerHTML = baseMetrics.map(item => metricHtml(...item)).join("");
-      $("#analysisWeatherNotice").textContent = "Premi Aggiorna dati per scaricare meteo e riempire i grafici locali.";
+      $("#analysisWeatherNotice").textContent = "Premi Scarica ICON-2I per scaricare il meteo e riempire i grafici locali.";
       clearWeatherCharts("Meteo non ancora scaricato");
       return;
     }
@@ -802,7 +817,7 @@
       ["Raffica max 2 gg", gust2 == null ? "—" : formatNumber(gust2, 0) + " km/h"]
     ]);
     $("#analysisMetrics").innerHTML = metrics.map(item => metricHtml(...item)).join("");
-    $("#analysisWeatherNotice").textContent = "Serie del punto meteo locale più vicino · dati Open-Meteo salvati sul telefono";
+    $("#analysisWeatherNotice").textContent = "Serie del punto meteo locale più vicino · ICON-2I via Open-Meteo · salvata sul telefono";
     $("#rainChartTotal").textContent = formatNumber(rain20, 1) + " mm / 20 gg";
     $("#humidityLatest").textContent = humidity7 == null ? "" : "media 7 gg " + formatNumber(humidity7, 0) + "%";
     renderBarChart($("#rainChart"), rows20.map(row => ({ label: shortDate(row.date), value: row.rain })),
@@ -992,13 +1007,13 @@
     $("#modelStatus").textContent = activeProfileEntry().label + " attivo";
     $("#modelUpdated").textContent = state.weather
       ? "Il meteo è disponibile: calcolo locale pronto"
-      : "Premi Aggiorna dati per calcolare le probabilità con questo profilo";
+      : "Premi Scarica ICON-2I per calcolare le probabilità con questo profilo";
   }
 
   function setModelUpdated(timestamp) {
     const date = new Date(timestamp);
-    $("#modelStatus").textContent = activeProfileEntry().label + " calcolato sul telefono";
-    $("#modelUpdated").textContent = "Ultimo aggiornamento: " + date.toLocaleString("it-IT", {
+    $("#modelStatus").textContent = activeProfileEntry().label + " · ICON-2I calcolato";
+    $("#modelUpdated").textContent = "ICON-2I · ultimo aggiornamento: " + date.toLocaleString("it-IT", {
       day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
     });
   }
@@ -1013,7 +1028,7 @@
   function resetUpdateButton() {
     const button = $("#updateWeather");
     button.disabled = false;
-    button.innerHTML = '<span class="button-icon">↻</span> Aggiorna dati';
+    button.innerHTML = '<span class="button-icon">⇩</span> Scarica ICON-2I';
   }
 
   function fieldStep(key) {
