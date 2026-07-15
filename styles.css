@@ -22,6 +22,23 @@ body { overscroll-behavior: none; padding-bottom: calc(74px + var(--safe-bottom)
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
+.access-locked { padding: 0; overflow: hidden; }
+.access-locked > :not(.access-gate) { visibility: hidden; }
+.access-gate { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  min-height: 100dvh; padding: calc(20px + var(--safe-top)) 18px calc(20px + var(--safe-bottom));
+  background: radial-gradient(circle at 70% 12%, #2c4c3c 0, #14271f 42%, #0d1c16 100%); }
+.access-gate.hidden { display: none; }
+.access-card { width: min(100%, 390px); padding: 27px 22px 23px; display: grid; gap: 13px;
+  border: 1px solid rgba(255,255,255,.13); border-radius: 25px; background: var(--paper);
+  box-shadow: 0 24px 70px rgba(0,0,0,.34); }
+.access-card .access-mark { width: 62px; height: 62px; display: grid; place-items: center;
+  border-radius: 20px; background: #e8d9b9; color: var(--clay-dark); font-size: 31px; }
+.access-card h1 { margin: -4px 0 0; color: var(--forest-900); font-size: 31px; line-height: 1; }
+.access-card > p { margin: -3px 0 4px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.remember-access { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 650; }
+.remember-access input { width: 18px; height: 18px; margin: 0; accent-color: var(--clay); }
+.access-error { min-height: 16px; color: #a33d2e; font-size: 11px; text-align: center; }
+
 .app-header {
   min-height: calc(76px + var(--safe-top)); padding: calc(12px + var(--safe-top)) 16px 12px;
   background: var(--forest-900); color: white; display: flex; align-items: center; gap: 11px;

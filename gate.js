@@ -1,8 +1,9 @@
 (function () {
   "use strict";
 
-  const ACCESS_VERSION = "fungi-access-v1";
-  const STORAGE_KEY = "fungi.mobile.access.v1";
+  const ACCESS_VERSION = "fungi-access-v3-20260715";
+  const STORAGE_KEY = "fungi.mobile.access.v3";
+  const LEGACY_STORAGE_KEYS = ["fungi.mobile.access.v1", "fungi.mobile.access.v2"];
   const SALT = "fungi-ai-pwa-gate-v1";
   const ITERATIONS = 210000;
   const EXPECTED = "xs3mwCBF6eoYmN+ijYNFm2hgRHWmQdviKWQo+LTFw38=";
@@ -10,10 +11,11 @@
   document.addEventListener("DOMContentLoaded", initializeGate);
 
   function initializeGate() {
+    clearLegacyAccess();
+    registerServiceWorker();
     const form = document.querySelector("#accessForm");
     form.addEventListener("submit", verifyAccess);
-    if (localStorage.getItem(STORAGE_KEY) === ACCESS_VERSION
-        || sessionStorage.getItem(STORAGE_KEY) === ACCESS_VERSION) {
+    if (hasCurrentAccess()) {
       unlockApp();
     } else {
       document.querySelector("#accessCode").focus();
@@ -36,10 +38,7 @@
         input.select();
         return;
       }
-      sessionStorage.setItem(STORAGE_KEY, ACCESS_VERSION);
-      if (document.querySelector("#rememberAccess").checked) {
-        localStorage.setItem(STORAGE_KEY, ACCESS_VERSION);
-      }
+      rememberCurrentAccess(document.querySelector("#rememberAccess").checked);
       input.value = "";
       unlockApp();
     } catch (failure) {
@@ -47,6 +46,42 @@
     } finally {
       button.disabled = false;
       button.textContent = "Entra";
+    }
+  }
+
+  function clearLegacyAccess() {
+    LEGACY_STORAGE_KEYS.forEach(key => {
+      try { localStorage.removeItem(key); } catch (_) { /* storage may be unavailable */ }
+      try { sessionStorage.removeItem(key); } catch (_) { /* storage may be unavailable */ }
+    });
+  }
+
+  function hasCurrentAccess() {
+    try {
+      return localStorage.getItem(STORAGE_KEY) === ACCESS_VERSION
+        || sessionStorage.getItem(STORAGE_KEY) === ACCESS_VERSION;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function rememberCurrentAccess(persistent) {
+    try { sessionStorage.setItem(STORAGE_KEY, ACCESS_VERSION); } catch (_) { /* session only */ }
+    if (persistent) {
+      try { localStorage.setItem(STORAGE_KEY, ACCESS_VERSION); } catch (_) { /* session only */ }
+    }
+  }
+
+  async function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    try {
+      const registration = await navigator.serviceWorker.register("sw.js", {
+        scope: "./",
+        updateViaCache: "none"
+      });
+      await registration.update();
+    } catch (_) {
+      /* La modalità online resta disponibile anche senza service worker. */
     }
   }
 
@@ -74,8 +109,5 @@
     const application = document.createElement("script");
     application.src = "app_v2.js";
     document.body.appendChild(application);
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("sw.js", { scope: "./" }).catch(() => { /* online mode remains available */ });
-    }
   }
 }());
