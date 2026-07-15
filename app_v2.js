@@ -11,11 +11,12 @@
     customProfile: "fungi.mobile.custom-profile.v1",
     basemap: "fungi.mobile.basemap.v1",
     overlay: "fungi.mobile.overlay.v1",
-    opacity: "fungi.mobile.overlay-opacity.v1"
-    ,dynamicMaps: "fungi.mobile.dynamic-maps.v1"
-    ,stations: "fungi.mobile.stations.v1"
-    ,stationCorrection: "fungi.mobile.station-correction.v1"
-    ,showStations: "fungi.mobile.show-stations.v1"
+    opacity: "fungi.mobile.overlay-opacity.v1",
+    dynamicMaps: "fungi.mobile.dynamic-maps.v1",
+    stations: "fungi.mobile.stations.v1",
+    stationCorrection: "fungi.mobile.station-correction.v1",
+    showStations: "fungi.mobile.show-stations.v1",
+    stationHistory: "fungi.mobile.station-history.v1"
   };
 
   const PROFILE_DESCRIPTIONS = {
@@ -152,6 +153,7 @@
     scores: {},
     weather: null,
     stations: [],
+    stationHistory: {},
     stationCorrection: false,
     showStations: true,
     raster: null,
@@ -172,6 +174,7 @@
     pointsLayer: null,
     stationsLayer: null,
     stationRequestHandlers: {},
+    selectedStationId: null,
     projectBounds: null
   };
 
@@ -203,14 +206,14 @@
         ? `Posizione trovata (${precision} m), fuori dall’area dei layer porcini`
         : `Posizione trovata · precisione circa ${precision} m`);
     },
-    onLocationError(message) { showToast(message || "Posizione non disponibile"); }
-    ,onJson(requestId, body) {
+    onLocationError(message) { showToast(message || "Posizione non disponibile"); },
+    onJson(requestId, body) {
       const handler = state.stationRequestHandlers[requestId];
       if (!handler) return;
       delete state.stationRequestHandlers[requestId];
       try { handler.resolve(JSON.parse(body)); } catch (error) { handler.reject(error); }
-    }
-    ,onJsonError(requestId, message) {
+    },
+    onJsonError(requestId, message) {
       const handler = state.stationRequestHandlers[requestId];
       if (!handler) return;
       delete state.stationRequestHandlers[requestId];
@@ -239,6 +242,7 @@
       state.dynamicMaps = loadJson(STORAGE.dynamicMaps, {});
       state.weather = loadJson(STORAGE.weather, null);
       state.stations = loadJson(STORAGE.stations, []);
+      state.stationHistory = loadJson(STORAGE.stationHistory, {});
       state.stationCorrection = localStorage.getItem(STORAGE.stationCorrection) === "true";
       state.showStations = localStorage.getItem(STORAGE.showStations) !== "false";
       loadStoredScores();
@@ -740,6 +744,7 @@
   }
 
   async function openStationAnalysis(station) {
+    state.selectedStationId = station.id;
     $("#pointAnalysis").classList.add("hidden");
     const panel = $("#stationAnalysis");
     panel.classList.remove("hidden");
@@ -756,44 +761,147 @@
       ["Nel calcolo", state.stationCorrection ? "Sì · entro 32 km" : "No · solo mappa"]
     ].map(item => metricHtml(...item)).join("");
     ["#stationRainChart", "#stationTemperatureChart", "#stationHumidityChart", "#stationWindChart"]
-      .forEach(selector => renderEmptyChart($(selector), "Carico osservazioni di oggi…"));
+      .forEach(selector => renderEmptyChart($(selector), "Carico 15 giorni di osservazioni…"));
+    $("#stationHistoryStatus").textContent = "Preparazione storico 15 giorni…";
     setTimeout(() => panel.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    const cached = state.stationHistory[station.id];
+    if (cached && Array.isArray(cached.rows)) {
+      renderStationHistory(cached.rows);
+      const freshCache = cached.rows.length >= 15 && Date.now() - Date.parse(cached.fetched_at) < 3600000;
+      const cachedAvailable = cached.rows.filter(stationHistoryRowHasData).length;
+      $("#stationHistoryStatus").textContent = freshCache
+        ? `Storico stazione · ${cachedAvailable}/15 giorni osservati (cache)`
+        : "Mostro la cache mentre aggiorno i 15 giorni…";
+      if (freshCache || !navigator.onLine) return;
+    }
     try {
       const requests = window.FungiModel.buildStationSeriesRequests(station);
-      const settled = await Promise.allSettled(requests.map(async request => ({ key: request.key,
-        payload: await fetchJson(request.url) })));
-      const rows = stationSeriesRows(settled.filter(item => item.status === "fulfilled").map(item => item.value));
-      renderBarChart($("#stationRainChart"), rows.map(row => ({ label: shortTime(row.date), value: row.rain_mm })),
-        { color: "#287dcc", minimumMaximum: 2 });
-      renderLineChart($("#stationTemperatureChart"), rows, [{ key: "temperature_c", label: "temperatura", color: "#d35428" }], { suffix: "°", dynamicRange: true });
-      renderLineChart($("#stationHumidityChart"), rows, [{ key: "humidity_pct", label: "umidità", color: "#287a54" }], { suffix: "%", minimum: 0, maximum: 100 });
-      renderLineChart($("#stationWindChart"), rows, [{ key: "wind_kmh", label: "vento", color: "#6f5a9c" }], { suffix: "", minimum: 0 });
+      const results = await fetchStationHistory(requests, completed => {
+        if (state.selectedStationId === station.id) {
+          $("#stationHistoryStatus").textContent = `Scarico storico MeteoHub · ${completed}/15 giorni`;
+        }
+      });
+      const freshRows = stationSeriesRows(results);
+      const rows = mergeStationHistoryRows((cached && cached.rows) || [], freshRows);
+      state.stationHistory[station.id] = { fetched_at: new Date().toISOString(), rows };
+      try { localStorage.setItem(STORAGE.stationHistory, JSON.stringify(state.stationHistory)); } catch (_) { /* cache optional */ }
+      if (state.selectedStationId !== station.id) return;
+      renderStationHistory(rows);
+      const availableDays = rows.filter(stationHistoryRowHasData).length;
+      $("#stationHistoryStatus").textContent = availableDays >= 15
+        ? "Storico completo · 15/15 giorni osservati"
+        : `Storico stazione · ${availableDays}/15 giorni osservati (cache cumulativa)`;
     } catch (error) {
       ["#stationRainChart", "#stationTemperatureChart", "#stationHumidityChart", "#stationWindChart"]
         .forEach(selector => renderEmptyChart($(selector), "Serie non disponibile: " + error.message));
+      $("#stationHistoryStatus").textContent = "Storico non disponibile";
     }
+  }
+
+  async function fetchStationHistory(requests, onProgress) {
+    const results = [];
+    let cursor = 0;
+    let completed = 0;
+    const worker = async () => {
+      while (cursor < requests.length) {
+        const request = requests[cursor];
+        cursor += 1;
+        try {
+          results.push({ key: request.key, date: request.date, payload: await fetchJson(request.url) });
+        } catch (_) {
+          results.push({ key: request.key, date: request.date, payload: null, failed: true });
+        }
+        completed += 1;
+        onProgress(completed);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, requests.length) }, () => worker()));
+    if (!results.some(result => result.payload)) throw new Error("MeteoHub non ha restituito giornate");
+    return results.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  function mergeStationHistoryRows(cachedRows, freshRows) {
+    const cachedByDate = new Map((cachedRows || []).map(row => [row.date, row]));
+    return freshRows.map(row => stationHistoryRowHasData(row) ? row : (cachedByDate.get(row.date) || row));
+  }
+
+  function stationHistoryRowHasData(row) {
+    return [row.temperature_min_c, row.temperature_max_c, row.humidity_mean_pct, row.wind_max_kmh, row.rain_mm]
+      .some(Number.isFinite);
+  }
+
+  function renderStationHistory(rows) {
+    renderBarChart($("#stationRainChart"), rows.map(row => ({ label: shortDate(row.date), value: row.rain_mm })),
+      { color: "#287dcc", minimumMaximum: 2 });
+    renderLineChart($("#stationTemperatureChart"), rows, [
+      { key: "temperature_min_c", label: "min", color: "#287dcc" },
+      { key: "temperature_max_c", label: "max", color: "#d35428" }
+    ], { suffix: "°", dynamicRange: true });
+    renderLineChart($("#stationHumidityChart"), rows,
+      [{ key: "humidity_mean_pct", label: "media", color: "#287a54" }],
+      { suffix: "%", minimum: 0, maximum: 100 });
+    renderLineChart($("#stationWindChart"), rows,
+      [{ key: "wind_max_kmh", label: "massimo", color: "#6f5a9c" }],
+      { suffix: "", minimum: 0 });
   }
 
   function stationSeriesRows(results) {
     const rows = new Map();
+    const ensure = date => {
+      if (!rows.has(date)) rows.set(date, { date, temperatures: [], humidities: [], winds: [], rainSeries: [] });
+      return rows.get(date);
+    };
     for (const result of results) {
+      ensure(result.date);
       for (const report of (result.payload && result.payload.data) || []) {
         for (const product of report.prod || []) {
-          if (result.key === "wind_kmh" && product.var !== "B11002") continue;
+          const productKey = { B12101: "temperature", B13003: "humidity", B11002: "wind", B13011: "rain" }[product.var];
+          if (!productKey) continue;
+          const rainByDate = new Map();
           for (const item of product.val || []) {
             if (item.rel != null && Number(item.rel) !== 1) continue;
             let value = Number(item.val);
             if (!Number.isFinite(value)) continue;
-            if (result.key === "temperature_c") value -= 273.15;
-            if (result.key === "wind_kmh") value *= 3.6;
-            const row = rows.get(item.ref) || { date: item.ref };
-            row[result.key] = value;
-            rows.set(item.ref, row);
+            const date = String(item.ref || result.date).slice(0, 10);
+            const row = ensure(date);
+            if (productKey === "temperature") row.temperatures.push(value - 273.15);
+            else if (productKey === "humidity") row.humidities.push(value);
+            else if (productKey === "wind") row.winds.push(value * 3.6);
+            else {
+              const values = rainByDate.get(date) || [];
+              values.push({ ref: item.ref, value });
+              rainByDate.set(date, values);
+            }
+          }
+          for (const [date, values] of rainByDate.entries()) {
+            ensure(date).rainSeries.push({ timerange: product.trange || "", values });
           }
         }
       }
     }
-    return [...rows.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return [...rows.values()].sort((a, b) => a.date.localeCompare(b.date)).map(row => ({
+      date: row.date,
+      temperature_min_c: row.temperatures.length ? Math.min(...row.temperatures) : null,
+      temperature_max_c: row.temperatures.length ? Math.max(...row.temperatures) : null,
+      temperature_mean_c: row.temperatures.length ? row.temperatures.reduce((sum, value) => sum + value, 0) / row.temperatures.length : null,
+      humidity_mean_pct: row.humidities.length ? row.humidities.reduce((sum, value) => sum + value, 0) / row.humidities.length : null,
+      wind_max_kmh: row.winds.length ? Math.max(...row.winds) : null,
+      rain_mm: stationDailyRain(row.rainSeries)
+    }));
+  }
+
+  function stationDailyRain(series) {
+    if (!series.length) return null;
+    const daily = series.find(item => String(item.timerange).includes("86400"));
+    if (daily) return maximum(daily.values.map(item => ({ value: item.value })), "value");
+    const hourly = series.find(item => String(item.timerange).includes("3600")) || series[0];
+    const lastByHour = new Map();
+    for (const item of hourly.values.sort((a, b) => String(a.ref).localeCompare(String(b.ref)))) {
+      const hour = String(item.ref).slice(0, 13);
+      lastByHour.set(hour, item.value);
+    }
+    const values = [...lastByHour.values()].filter(Number.isFinite);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
   }
 
   function renderProfileUi() {
@@ -966,6 +1074,7 @@
   }
 
   function selectLocation(lat, lon, showMarker) {
+    state.selectedStationId = null;
     if ($("#stationAnalysis")) $("#stationAnalysis").classList.add("hidden");
     state.selected = { lat: Number(lat), lon: Number(lon) };
     $("#coordReadout").textContent = state.selected.lat.toFixed(5) + ", " + state.selected.lon.toFixed(5);

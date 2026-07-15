@@ -339,19 +339,18 @@
   }
 
   function buildStationSeriesRequests(station) {
-    const end = new Date();
-    const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0));
-    const specs = [
-      ["temperature_c", "B12101", "254,0,0", "103,2000,0,0"],
-      ["humidity_pct", "B13003", "254,0,0", "103,2000,0,0"],
-      ["wind_kmh", "B11002 or B11001", "254,0,0", "103,10000,0,0"],
-      ["rain_mm", "B13011", "1,0,3600", "1,0,0,0"]
-    ];
-    return specs.map(([key, product, timerange, level]) => {
-      const q = `${reftimeQuery(start, end)};timerange:${timerange};level:${level};license:CCBY_COMPLIANT;product:${product}`;
+    const now = new Date();
+    const product = "B12101 or B13003 or B11002 or B11001 or B13011";
+    return Array.from({ length: 15 }, (_, index) => {
+      const offset = index - 14;
+      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offset, 0, 0, 0));
+      const lastDay = offset === 0;
+      const end = lastDay ? now : new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 23, 59, 0));
+      const q = `${reftimeQuery(start, end)};license:CCBY_COMPLIANT;product:${product}`;
       const query = new URLSearchParams({ q, lat: String(station.lat), lon: String(station.lon),
         networks: station.network, stationDetails: "true" });
-      return { key, url: "https://meteohub.agenziaitaliameteo.it/api/observations?" + query.toString() };
+      return { key: "combined", date: start.toISOString().slice(0, 10),
+        url: "https://meteohub.agenziaitaliameteo.it/api/observations?" + query.toString() };
     });
   }
 
