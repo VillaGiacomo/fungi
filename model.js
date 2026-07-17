@@ -3,6 +3,7 @@
 
   const DAY_KEYS = ["today", "tomorrow", "day_after_tomorrow"];
   const DAY_OFFSETS = [0, 1, 2];
+  const WEATHER_TIME_ZONE = "Europe/Rome";
 
   function buildWeatherRequest(manifest) {
     const bbox = manifest.area.bbox;
@@ -337,7 +338,7 @@
   function buildStationObservationRequests(manifest) {
     const end = new Date();
     const start = new Date(end.getTime() - 4 * 3600000);
-    const dayStart = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0));
+    const dayStart = romeMidnightUtc(romeDateIso(end));
     const bbox = manifest.area.bbox;
     const boundingBox = `latmin:${bbox.min_lat},lonmin:${bbox.min_lon},latmax:${bbox.max_lat},lonmax:${bbox.max_lon}`;
     const specs = [
@@ -359,16 +360,19 @@
 
   function buildStationSeriesRequests(station) {
     const now = new Date();
+    const today = romeDateIso(now);
     const product = "B12101 or B13003 or B11002 or B11001 or B13011";
     return Array.from({ length: 15 }, (_, index) => {
       const offset = index - 14;
-      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offset, 0, 0, 0));
+      const date = addDays(today, offset);
+      const start = romeMidnightUtc(date);
+      const nextDay = romeMidnightUtc(addDays(date, 1));
       const lastDay = offset === 0;
-      const end = lastDay ? now : new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(), 23, 59, 0));
+      const end = lastDay ? now : new Date(nextDay.getTime() - 60000);
       const q = `${reftimeQuery(start, end)};license:CCBY_COMPLIANT;product:${product}`;
       const query = new URLSearchParams({ q, lat: String(station.lat), lon: String(station.lon),
         networks: station.network, stationDetails: "true" });
-      return { key: "combined", date: start.toISOString().slice(0, 10),
+      return { key: "combined", date,
         url: "https://meteohub.agenziaitaliameteo.it/api/observations?" + query.toString() };
     });
   }
@@ -592,24 +596,54 @@
   }
 
   function localTodayIso() {
-    const now = new Date();
-    return now.getFullYear().toString().padStart(4, "0") + "-"
-      + (now.getMonth() + 1).toString().padStart(2, "0") + "-"
-      + now.getDate().toString().padStart(2, "0");
+    return romeDateIso(new Date());
   }
 
   function addDays(iso, days) {
-    const date = new Date(iso + "T12:00:00");
-    date.setDate(date.getDate() + days);
-    return date.getFullYear().toString().padStart(4, "0") + "-"
-      + (date.getMonth() + 1).toString().padStart(2, "0") + "-"
-      + date.getDate().toString().padStart(2, "0");
+    const date = new Date(iso + "T12:00:00Z");
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.getUTCFullYear().toString().padStart(4, "0") + "-"
+      + (date.getUTCMonth() + 1).toString().padStart(2, "0") + "-"
+      + date.getUTCDate().toString().padStart(2, "0");
   }
 
   function daysBetween(start, end) {
-    const first = new Date(start + "T12:00:00");
-    const second = new Date(end + "T12:00:00");
+    const first = new Date(start + "T12:00:00Z");
+    const second = new Date(end + "T12:00:00Z");
     return Math.round((second - first) / 86400000);
+  }
+
+  function romeDateIso(value) {
+    const parts = romeDateTimeParts(value);
+    return parts.year.toString().padStart(4, "0") + "-"
+      + parts.month.toString().padStart(2, "0") + "-"
+      + parts.day.toString().padStart(2, "0");
+  }
+
+  function romeMidnightUtc(iso) {
+    const [year, month, day] = iso.split("-").map(Number);
+    const wanted = Date.UTC(year, month - 1, day, 0, 0, 0);
+    let guess = wanted;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const parts = romeDateTimeParts(new Date(guess));
+      const represented = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+      const difference = represented - wanted;
+      if (difference === 0) break;
+      guess -= difference;
+    }
+    return new Date(guess);
+  }
+
+  function romeDateTimeParts(value) {
+    const formatted = new Intl.DateTimeFormat("en-GB", {
+      timeZone: WEATHER_TIME_ZONE,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+    }).formatToParts(value);
+    const parts = Object.fromEntries(formatted.filter(item => item.type !== "literal")
+      .map(item => [item.type, Number(item.value)]));
+    return { year: parts.year, month: parts.month, day: parts.day,
+      hour: parts.hour, minute: parts.minute, second: parts.second };
   }
 
   function clamp(value, low, high) {

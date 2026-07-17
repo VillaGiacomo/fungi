@@ -156,6 +156,7 @@ textarea { resize: vertical; }
 .chart-grid { stroke: #e3e2db; stroke-width: 1; }
 .chart-axis-label { fill: #788079; font-size: 8px; font-family: system-ui,-apple-system,sans-serif; }
 .chart-value-label { fill: #34453c; font-size: 9px; font-weight: 750; font-family: system-ui,-apple-system,sans-serif; }
+.chart-missing-label { fill: #9a9f9b; font-size: 11px; font-weight: 800; font-family: system-ui,-apple-system,sans-serif; }
 .chart-line { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .chart-dot { stroke: #fff; stroke-width: 1.2; }
 .chart-key { display: flex; align-items: center; gap: 4px; white-space: nowrap; }

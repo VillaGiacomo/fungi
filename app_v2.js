@@ -17,7 +17,7 @@
     stationCorrection: "fungi.mobile.station-correction.v1",
     showStations: "fungi.mobile.show-stations.v1",
     stationVariable: "fungi.mobile.station-variable.v1",
-    stationHistory: "fungi.mobile.station-history.v1"
+    stationHistory: "fungi.mobile.station-history.v2"
   };
 
   const PROFILE_DESCRIPTIONS = {
@@ -888,7 +888,19 @@
 
   function mergeStationHistoryRows(cachedRows, freshRows) {
     const cachedByDate = new Map((cachedRows || []).map(row => [row.date, row]));
-    return freshRows.map(row => stationHistoryRowHasData(row) ? row : (cachedByDate.get(row.date) || row));
+    return freshRows.map(row => {
+      const cached = cachedByDate.get(row.date);
+      if (!cached) return row;
+      const merged = { date: row.date };
+      const keys = new Set([...Object.keys(cached), ...Object.keys(row)]);
+      keys.delete("date");
+      for (const key of keys) {
+        if (Number.isFinite(row[key])) merged[key] = row[key];
+        else if (Number.isFinite(cached[key])) merged[key] = cached[key];
+        else merged[key] = row[key] ?? cached[key] ?? null;
+      }
+      return merged;
+    });
   }
 
   function stationHistoryRowHasData(row) {
@@ -928,7 +940,10 @@
             if (item.rel != null && Number(item.rel) !== 1) continue;
             let value = Number(item.val);
             if (!Number.isFinite(value)) continue;
-            const date = String(item.ref || result.date).slice(0, 10);
+            // Each request is already bounded to one Europe/Rome calendar day.
+            // MeteoHub timestamps are UTC, so their raw YYYY-MM-DD can differ
+            // from the local day around midnight.
+            const date = result.date;
             const row = ensure(date);
             if (productKey === "temperature") row.temperatures.push(value - 273.15);
             else if (productKey === "humidity") row.humidities.push(value);
@@ -958,16 +973,48 @@
 
   function stationDailyRain(series) {
     if (!series.length) return null;
-    const daily = series.find(item => String(item.timerange).includes("86400"));
-    if (daily) return maximum(daily.values.map(item => ({ value: item.value })), "value");
-    const hourly = series.find(item => String(item.timerange).includes("3600")) || series[0];
-    const lastByHour = new Map();
-    for (const item of hourly.values.sort((a, b) => String(a.ref).localeCompare(String(b.ref)))) {
-      const hour = String(item.ref).slice(0, 13);
-      lastByHour.set(hour, item.value);
+    const grouped = new Map();
+    for (const item of series) {
+      const intervalSeconds = precipitationIntervalSeconds(item.timerange);
+      const key = intervalSeconds > 0 ? `seconds:${intervalSeconds}` : `timerange:${item.timerange || "unknown"}`;
+      const group = grouped.get(key) || { intervalSeconds, values: new Map() };
+      for (const observation of item.values || []) {
+        const value = Number(observation.value);
+        if (!Number.isFinite(value) || value < 0) continue;
+        group.values.set(String(observation.ref || group.values.size), value);
+      }
+      grouped.set(key, group);
     }
-    const values = [...lastByHour.values()].filter(Number.isFinite);
-    return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+    const candidates = [...grouped.values()].filter(group => group.values.size);
+    if (!candidates.length) return null;
+    const daily = candidates.filter(group => group.intervalSeconds >= 86400);
+    if (daily.length) return Math.max(...daily.flatMap(group => [...group.values.values()]));
+    candidates.sort((left, right) => rainCoverage(right) - rainCoverage(left)
+      || positiveInterval(left.intervalSeconds) - positiveInterval(right.intervalSeconds)
+      || right.values.size - left.values.size);
+    const selected = candidates[0];
+    return [...selected.values.values()].reduce((sum, value) => sum + value, 0);
+  }
+
+  function precipitationIntervalSeconds(timerange) {
+    const parts = String(timerange || "").split(",").map(Number);
+    if (parts.length < 3 || parts[0] !== 1) return 0;
+    const seconds = Number(parts[parts.length - 1]);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  }
+
+  function rainCoverage(group) {
+    const refs = [...group.values.keys()].map(value => {
+      const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : value + "Z";
+      return Date.parse(normalized);
+    }).filter(Number.isFinite).sort((a, b) => a - b);
+    const interval = Number.isFinite(group.intervalSeconds) && group.intervalSeconds > 0 ? group.intervalSeconds : 0;
+    if (!refs.length) return Math.min(86400, group.values.size * Math.max(interval, 1));
+    return Math.min(86400, (refs[refs.length - 1] - refs[0]) / 1000 + interval);
+  }
+
+  function positiveInterval(value) {
+    return Number.isFinite(value) && value > 0 ? value : 86400;
   }
 
   function renderProfileUi() {
@@ -1242,7 +1289,7 @@
       ["Bosco", forestLabelForId(state.raster.forest[cell.index])],
       ["Suolo", soilLabel(state.raster.soil[cell.index])]
     ];
-    const daily = nearestWeatherDaily(state.selected);
+    const daily = interpolatedWeatherDaily(state.selected);
     if (!daily) {
       $("#analysisMetrics").innerHTML = baseMetrics.map(item => metricHtml(...item)).join("");
       $("#analysisWeatherNotice").textContent = "Premi Scarica ICON-2I per scaricare il meteo e riempire i grafici locali.";
@@ -1265,7 +1312,7 @@
       ["Raffica max 2 gg", gust2 == null ? "—" : formatNumber(gust2, 0) + " km/h"]
     ]);
     $("#analysisMetrics").innerHTML = metrics.map(item => metricHtml(...item)).join("");
-    $("#analysisWeatherNotice").textContent = "Serie del punto meteo locale più vicino · ICON-2I via Open-Meteo · salvata sul telefono";
+    $("#analysisWeatherNotice").textContent = "Serie interpolata dai quattro punti meteo più vicini · ICON-2I via Open-Meteo · salvata sul telefono";
     $("#rainChartTotal").textContent = formatNumber(rain20, 1) + " mm / 20 gg";
     $("#humidityLatest").textContent = humidity7 == null ? "" : "media 7 gg " + formatNumber(humidity7, 0) + "%";
     renderBarChart($("#rainChart"), rows20.map(row => ({ label: shortDate(row.date), value: row.rain })),
@@ -1277,15 +1324,42 @@
       { suffix: "%", minimum: 0, maximum: 100 });
   }
 
-  function nearestWeatherDaily(location) {
+  function interpolatedWeatherDaily(location) {
     if (!state.weather) return null;
     const payloads = Array.isArray(state.weather) ? state.weather : [state.weather];
     const bbox = state.manifest.area.bbox;
     const axis = Number(state.manifest.model.weather_points_per_axis || 5);
-    const column = clamp(Math.round((location.lon - bbox.min_lon) / (bbox.max_lon - bbox.min_lon) * (axis - 1)), 0, axis - 1);
-    const row = clamp(Math.round((bbox.max_lat - location.lat) / (bbox.max_lat - bbox.min_lat) * (axis - 1)), 0, axis - 1);
-    const payload = payloads[row * axis + column] || payloads[0];
-    return payload && payload.daily && Array.isArray(payload.daily.time) ? payload.daily : null;
+    const source = payloads.find(payload => payload && payload.daily && Array.isArray(payload.daily.time));
+    if (!source) return null;
+    if (payloads.length !== axis * axis) return source.daily;
+    const gx = clamp((location.lon - bbox.min_lon) / (bbox.max_lon - bbox.min_lon) * (axis - 1), 0, axis - 1);
+    const gy = clamp((bbox.max_lat - location.lat) / (bbox.max_lat - bbox.min_lat) * (axis - 1), 0, axis - 1);
+    const variables = ["precipitation_sum", "temperature_2m_mean", "temperature_2m_min",
+      "temperature_2m_max", "relative_humidity_2m_mean", "wind_gusts_10m_max"];
+    const result = { time: [...source.daily.time] };
+    for (const variable of variables) {
+      result[variable] = result.time.map(date => bilinearDailyValue(payloads, variable, date, gx, gy, axis));
+    }
+    return result;
+  }
+
+  function bilinearDailyValue(payloads, variable, date, gx, gy, axis) {
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const x1 = Math.min(axis - 1, x0 + 1), y1 = Math.min(axis - 1, y0 + 1);
+    const tx = gx - x0, ty = gy - y0;
+    const valueAt = (row, column) => {
+      const daily = payloads[row * axis + column] && payloads[row * axis + column].daily;
+      if (!daily || !Array.isArray(daily.time) || !Array.isArray(daily[variable])) return NaN;
+      const index = daily.time.indexOf(date);
+      return index >= 0 ? Number(daily[variable][index]) : NaN;
+    };
+    const q00 = valueAt(y0, x0), q10 = valueAt(y0, x1), q01 = valueAt(y1, x0), q11 = valueAt(y1, x1);
+    const valid = [q00, q10, q01, q11].filter(Number.isFinite);
+    if (!valid.length) return null;
+    const fallback = valid.reduce((sum, value) => sum + value, 0) / valid.length;
+    const top = (Number.isFinite(q00) ? q00 : fallback) * (1 - tx) + (Number.isFinite(q10) ? q10 : fallback) * tx;
+    const bottom = (Number.isFinite(q01) ? q01 : fallback) * (1 - tx) + (Number.isFinite(q11) ? q11 : fallback) * tx;
+    return top * (1 - ty) + bottom * ty;
   }
 
   function weatherRows(daily, targetDate, count) {
@@ -1307,12 +1381,16 @@
     const maxValue = options.maximum || Math.max(options.minimumMaximum || 1, ...finite);
     const slot = plotWidth / data.length, barWidth = Math.max(3, slot * 0.66);
     const bars = data.map((item, index) => {
-      const value = Number.isFinite(item.value) ? item.value : 0;
+      const available = Number.isFinite(item.value);
+      const value = available ? item.value : 0;
       const barHeight = clamp(value / maxValue, 0, 1) * plotHeight;
       const x = left + index * slot + (slot - barWidth) / 2, y = top + plotHeight - barHeight;
-      const valueLabel = options.showValues ? `<text x="${x + barWidth / 2}" y="${Math.max(10, y - 4)}" text-anchor="middle" class="chart-value-label">${Number.isFinite(item.value) ? Math.round(item.value) + (options.suffix || "") : "—"}</text>` : "";
+      const valueLabel = options.showValues ? `<text x="${x + barWidth / 2}" y="${Math.max(10, y - 4)}" text-anchor="middle" class="chart-value-label">${available ? Math.round(item.value) + (options.suffix || "") : "—"}</text>` : "";
       const showLabel = data.length <= 5 || index === 0 || index === data.length - 1 || index === Math.floor(data.length / 2);
-      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="2" fill="${options.color || "#287dcc"}"/>${valueLabel}${showLabel ? `<text x="${x + barWidth / 2}" y="136" text-anchor="middle" class="chart-axis-label">${escapeHtml(item.label)}</text>` : ""}`;
+      const mark = available
+        ? `<rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="2" fill="${options.color || "#287dcc"}"/>`
+        : `<text x="${x + barWidth / 2}" y="${top + plotHeight - 4}" text-anchor="middle" class="chart-missing-label">×</text>`;
+      return `${mark}${valueLabel}${showLabel ? `<text x="${x + barWidth / 2}" y="136" text-anchor="middle" class="chart-axis-label">${escapeHtml(item.label)}</text>` : ""}`;
     }).join("");
     host.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img"><line x1="${left}" y1="${top + plotHeight}" x2="${width - right}" y2="${top + plotHeight}" class="chart-grid"/><text x="2" y="${top + 4}" class="chart-axis-label">${formatNumber(maxValue, 0)}</text><text x="13" y="${top + plotHeight}" class="chart-axis-label">0</text>${bars}</svg>`;
   }
@@ -1330,8 +1408,24 @@
     const yFor = value => top + (maxValue - value) / (maxValue - minValue) * plotHeight;
     const grids = [0, 0.5, 1].map(part => { const y = top + part * plotHeight; const value = maxValue - part * (maxValue - minValue); return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="chart-grid"/><text x="2" y="${y + 3}" class="chart-axis-label">${formatNumber(value, 0)}${options.suffix || ""}</text>`; }).join("");
     const lines = series.map(line => {
-      const points = rows.map((row, index) => Number.isFinite(row[line.key]) ? `${xFor(index)},${yFor(row[line.key])}` : null).filter(Boolean);
-      return `<polyline points="${points.join(" ")}" fill="none" stroke="${line.color}" class="chart-line"/><circle cx="${points.length ? points[points.length - 1].split(",")[0] : 0}" cy="${points.length ? points[points.length - 1].split(",")[1] : 0}" r="3" fill="${line.color}"/>`;
+      const segments = [];
+      let segment = [];
+      const points = [];
+      rows.forEach((row, index) => {
+        if (Number.isFinite(row[line.key])) {
+          const point = { x: xFor(index), y: yFor(row[line.key]) };
+          segment.push(point);
+          points.push(point);
+        } else if (segment.length) {
+          segments.push(segment);
+          segment = [];
+        }
+      });
+      if (segment.length) segments.push(segment);
+      const polylines = segments.filter(items => items.length > 1).map(items =>
+        `<polyline points="${items.map(point => `${point.x},${point.y}`).join(" ")}" fill="none" stroke="${line.color}" class="chart-line"/>`).join("");
+      const dots = points.map(point => `<circle cx="${point.x}" cy="${point.y}" r="2.2" fill="${line.color}"/>`).join("");
+      return polylines + dots;
     }).join("");
     const keys = series.map(line => `<span><i style="background:${line.color}"></i>${escapeHtml(line.label)}</span>`).join("");
     host.innerHTML = `<div class="chart-key">${keys}</div><svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img">${grids}${lines}<text x="${left}" y="136" class="chart-axis-label">${shortDate(rows[0].date)}</text><text x="${width - right}" y="136" text-anchor="end" class="chart-axis-label">${shortDate(rows[rows.length - 1].date)}</text></svg>`;

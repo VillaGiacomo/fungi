@@ -1,4 +1,4 @@
-const APP_CACHE = "fungi-ai-app-v12-map-controls";
+const APP_CACHE = "fungi-ai-app-v13-weather-data-fix";
 const RUNTIME_CACHE = "fungi-ai-runtime-v2";
 const MAX_RUNTIME_ENTRIES = 350;
 const APP_FILES = [
